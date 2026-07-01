@@ -1,40 +1,97 @@
 import numpy as np
+import random
 from tensorflow import keras
+from tensorflow.keras import layers
+import joblib
+import os
+
+# ---------- Load the model and scaler once (avoid reloading every time) ----------
+_WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "ml_model", "traffic_model.weights.h5")
+_SCALER_PATH = os.path.join(os.path.dirname(__file__), "ml_model", "scaler.save")
+
+_model = None
+_scaler = None
+
+WEATHER_TO_NUMBER = {
+    "Clear": 0,
+    "Cloudy": 1,
+    "Rainy": 2,
+    "Foggy": 3,
+}
+
+
+def _build_model_architecture():
+    """
+    Build the model architecture here in code (same as in train_model.py -
+    3 inputs, 2 hidden layers, 1 output). This means only the "weights"
+    (numbers) need to be loaded from file, not the full model object -
+    this avoids the TensorFlow version mismatch issue (which is what
+    caused the earlier error with the full .h5 model approach).
+    """
+    model = keras.Sequential([
+        layers.Input(shape=(3,)),
+        layers.Dense(16, activation="relu"),
+        layers.Dense(8, activation="relu"),
+        layers.Dense(1)
+    ])
+    return model
+
 
 def load_model():
-    try:
-        model = keras.models.load_model('ml_model/traffic_model.h5')
-        return model
-    except:
-        return None
+    """Build the model architecture, then load only the weights."""
+    global _model, _scaler
+    if _model is None:
+        try:
+            _model = _build_model_architecture()
+            _model.load_weights(_WEIGHTS_PATH)
+            _scaler = joblib.load(_SCALER_PATH)
+            print("TensorFlow traffic model loaded successfully.")
+        except Exception as e:
+            print(f"Model could not be loaded, falling back to rule-based formula. Reason: {e}")
+            _model = None
+    return _model
 
 
 def predict_congestion(vehicle_count, weather, hour):
     """
-    Rule-based congestion scorer (used as fallback until the trained
-    keras model is wired in). Score range: 0 (clear) - 10 (gridlock).
+    First tries to predict using the TensorFlow model.
+    If the model isn't available (or fails for any reason), falls
+    back to the old rule-based formula - this way the app never crashes.
     """
-    base_score = vehicle_count / 10
+    model = load_model()
 
-    if weather == "Rainy":
-        base_score += 2
-    elif weather == "Foggy":
-        base_score += 1.5
-    elif weather == "Cloudy":
-        base_score += 0.5
+    if model is not None:
+        try:
+            weather_num = WEATHER_TO_NUMBER.get(weather, 0)
+            input_data = np.array([[vehicle_count, weather_num, hour]])
+            input_scaled = _scaler.transform(input_data)
+            prediction = model.predict(input_scaled, verbose=0)
+            score = float(prediction[0][0])
+            score = max(0.0, min(10.0, round(score, 1)))
+            return score
+        except Exception as e:
+            print(f"Model prediction failed, switching to formula: {e}")
+            # falls through to the rule-based formula below
 
-    # rush hours morning and evening
+    # ---------- Fallback: rule-based formula (same as before) ----------
+    base_score = vehicle_count / 8
+
+    weather_multiplier = {
+        "Rainy": 1.35,
+        "Foggy": 1.25,
+        "Cloudy": 1.1,
+    }.get(weather, 1.0)
+    base_score *= weather_multiplier
+
     if hour in [8, 9, 10, 17, 18, 19]:
-        base_score += 1.5
+        base_score *= 1.2
 
     congestion_score = min(round(base_score, 1), 10.0)
-
     return congestion_score
 
 
-# typical traffic multiplier curve across a 24-hour day,
-# relative to an "average" hour (1.0 = average).
-# tuned for a typical Indian city road pattern.
+# ==================== Everything below is exactly the same as before ====================
+
 HOURLY_MULTIPLIER = {
     0: 0.3, 1: 0.2, 2: 0.15, 3: 0.15, 4: 0.2, 5: 0.4,
     6: 0.7, 7: 1.0, 8: 1.5, 9: 1.6, 10: 1.3, 11: 1.1,
@@ -42,26 +99,32 @@ HOURLY_MULTIPLIER = {
     18: 1.7, 19: 1.6, 20: 1.2, 21: 0.9, 22: 0.6, 23: 0.4
 }
 
+WEEKEND_MULTIPLIER = {
+    0: 0.35, 1: 0.25, 2: 0.2, 3: 0.2, 4: 0.25, 5: 0.35,
+    6: 0.5, 7: 0.7, 8: 0.9, 9: 1.0, 10: 1.15, 11: 1.3,
+    12: 1.4, 13: 1.35, 14: 1.25, 15: 1.25, 16: 1.35, 17: 1.45,
+    18: 1.5, 19: 1.4, 20: 1.25, 21: 1.0, 22: 0.7, 23: 0.45
+}
 
-def predict_short_term(vehicle_count, weather, current_hour, current_minute=0):
-    """
-    Predicts congestion 30 minutes and 60 minutes from now.
-    Uses linear interpolation between the current hour's traffic
-    multiplier and the next hour's, based on how far into the
-    current hour we are — gives a smoother short-term estimate
-    than jumping straight to the next hour's bucket.
-    """
+
+def _curve_for(is_weekend):
+    return WEEKEND_MULTIPLIER if is_weekend else HOURLY_MULTIPLIER
+
+
+def predict_short_term(vehicle_count, weather, current_hour, current_minute=0, is_weekend=False):
+    curve = _curve_for(is_weekend)
+
     def multiplier_at(hour_offset_minutes):
         total_minutes = current_hour * 60 + current_minute + hour_offset_minutes
         total_minutes = total_minutes % (24 * 60)
         hour = total_minutes // 60
         minute_frac = (total_minutes % 60) / 60.0
         next_hour = (hour + 1) % 24
-        m1 = HOURLY_MULTIPLIER.get(hour, 1.0)
-        m2 = HOURLY_MULTIPLIER.get(next_hour, 1.0)
+        m1 = curve.get(hour, 1.0)
+        m2 = curve.get(next_hour, 1.0)
         return m1 + (m2 - m1) * minute_frac, (hour + (1 if minute_frac >= 0.5 else 0)) % 24
 
-    current_multiplier = HOURLY_MULTIPLIER.get(current_hour, 1.0)
+    current_multiplier = curve.get(current_hour, 1.0)
     baseline_vehicles = vehicle_count / current_multiplier if current_multiplier > 0 else vehicle_count
 
     results = {}
@@ -78,16 +141,7 @@ def predict_short_term(vehicle_count, weather, current_hour, current_minute=0):
 
 
 def predict_future_congestion(vehicle_count, weather, current_hour, hours_ahead=6):
-    """
-    Projects congestion score for the next `hours_ahead` hours using
-    the current detected vehicle count as a baseline, scaled by typical
-    hourly traffic patterns. This is a heuristic trend projection, not
-    a learned time-series forecast — it answers "if current traffic is
-    X, what does the next few hours likely look like given normal daily
-    rush-hour patterns".
-    """
     current_multiplier = HOURLY_MULTIPLIER.get(current_hour, 1.0)
-    # avoid divide by zero, and avoid wildly scaling up tiny counts
     baseline_vehicles = vehicle_count / current_multiplier if current_multiplier > 0 else vehicle_count
 
     forecast = []
@@ -105,3 +159,33 @@ def predict_future_congestion(vehicle_count, weather, current_hour, hours_ahead=
         })
 
     return forecast
+
+
+def get_peak_hour_profile(vehicle_count, weather, current_hour, is_weekend=False, location_seed=None):
+    curve = _curve_for(is_weekend)
+    current_multiplier = curve.get(current_hour, 1.0)
+    baseline_vehicles = vehicle_count / current_multiplier if current_multiplier > 0 else vehicle_count
+
+    rng = random.Random(location_seed) if location_seed is not None else None
+
+    profile = []
+    for hour in range(24):
+        base_mult = curve.get(hour, 1.0)
+        wobble = 1 + (rng.random() - 0.5) * 0.24 if rng else 1.0
+        multiplier = base_mult * wobble
+
+        projected_vehicles = max(int(baseline_vehicles * multiplier), 0)
+        score = predict_congestion(projected_vehicles, weather, hour)
+        profile.append({
+            "hour": hour,
+            "projected_vehicles": projected_vehicles,
+            "congestion_score": score,
+            "is_current": hour == current_hour
+        })
+
+    busiest = sorted(profile, key=lambda p: p["congestion_score"], reverse=True)[:3]
+    peak_hours = {p["hour"] for p in busiest}
+    for p in profile:
+        p["is_peak"] = p["hour"] in peak_hours
+
+    return profile

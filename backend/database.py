@@ -1,10 +1,15 @@
+import os
 import mysql.connector
+from dotenv import load_dotenv
+
+load_dotenv()
+
 
 def get_connection():
     conn = mysql.connector.connect(
-        host="127.0.0.1",
-        user="root",
-        password="2006",
-        database="smart_traffic"
+        host=os.getenv("DB_HOST", "127.0.0.1"),
+        user=os.getenv("DB_USER", "root"),
+        password=os.getenv("DB_PASSWORD"),
+        database=os.getenv("DB_NAME", "smart_traffic")
     )
     return conn

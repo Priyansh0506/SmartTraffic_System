@@ -26,14 +26,21 @@ def live_traffic():
         vehicle_count = count_vehicles(coords['lat'], coords['lon'])
         congestion_score = predict_congestion(vehicle_count, weather, hour)
 
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO traffic_data (location, vehicle_count, weather, congestion_score) VALUES (%s, %s, %s, %s)",
-            (location_name, vehicle_count, weather, congestion_score)
-        )
-        conn.commit()
-        conn.close()
+        # try to log this reading to the DB, but don't let a DB hiccup
+        # take down the whole live-traffic response - the frontend still
+        # needs the numbers even if history logging fails this once
+        try:
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "INSERT INTO traffic_data (location, vehicle_count, weather, congestion_score) VALUES (%s, %s, %s, %s)",
+                (location_name, vehicle_count, weather, congestion_score)
+            )
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"[traffic] failed to log {location_name}: {e}")
 
         results.append({
             "location": location_name,
@@ -47,9 +54,14 @@ def live_traffic():
 
 @traffic_bp.route('/api/traffic/history', methods=['GET'])
 def traffic_history():
-    conn = get_connection()
-    cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT * FROM traffic_data ORDER BY timestamp DESC LIMIT 20")
-    data = cursor.fetchall()
-    conn.close()
-    return jsonify(data)
+    try:
+        conn = get_connection()
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT * FROM traffic_data ORDER BY timestamp DESC LIMIT 20")
+        data = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return jsonify(data)
+    except Exception as e:
+        print(f"[traffic] history fetch failed: {e}")
+        return jsonify({"error": "Could not load traffic history"}), 500
