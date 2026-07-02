@@ -6,6 +6,8 @@ from routes.emergency import emergency_bp
 from routes.demo import demo_bp
 from routes.route import route_bp
 from routes.peak import peak_bp
+from routes.accident import accident_bp
+
 
 app = Flask(__name__)
 CORS(app)
@@ -17,6 +19,7 @@ app.register_blueprint(emergency_bp)
 app.register_blueprint(demo_bp)
 app.register_blueprint(route_bp)
 app.register_blueprint(peak_bp)
+app.register_blueprint(accident_bp)
 
 @app.route('/')
 def home():

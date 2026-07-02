@@ -1,8 +1,11 @@
 import requests
 import datetime
+import os
+from dotenv import load_dotenv
 
-TOMTOM_API_KEY = "jH5ES6h0SgbDwRBUqrVRqM89aD8LGRNw"
+load_dotenv()
 
+TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 # Indian city traffic pattern by hour
 HOURLY_MULTIPLIER = {
     0: 0.3, 1: 0.2, 2: 0.15, 3: 0.15, 4: 0.2, 5: 0.4,
