@@ -1,0 +1,211 @@
+import React, { useState, useEffect } from 'react';
+import axios from 'axios';
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
+import 'leaflet/dist/leaflet.css';
+
+// same trick as the route optimizer map - leaflet needs a nudge after
+// mount or it renders with the wrong size half the time
+function MapReadyHandler({ bounds }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      map.invalidateSize();
+      if (bounds) map.fitBounds(bounds, { padding: [40, 40] });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [map, bounds]);
+
+  return null;
+}
+
+function EmergencyRoute() {
+  const [vehicleType, setVehicleType] = useState('ambulance');
+  const [source, setSource] = useState('');
+  const [sourceCoords, setSourceCoords] = useState(null);
+  const [sourceEdited, setSourceEdited] = useState(false);
+  const [destination, setDestination] = useState('');
+  const [result, setResult] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [locating, setLocating] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getLocation();
+  }, []);
+
+  function getLocation() {
+    if (!navigator.geolocation) {
+      setLocating(false);
+      return;
+    }
+
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(async (pos) => {
+      const lat = pos.coords.latitude;
+      const lon = pos.coords.longitude;
+      setSourceCoords(lat + ',' + lon);
+
+      try {
+        const res = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+          params: { lat, lon, format: 'json' }
+        });
+        const place = res.data?.display_name?.split(',').slice(0, 2).join(',');
+        setSource(place || 'Current location');
+      } catch (e) {
+        setSource('Current location');
+      }
+      setLocating(false);
+    }, () => setLocating(false));
+  }
+
+  async function findRoute() {
+    if (!source.trim() || !destination.trim()) return;
+
+    setLoading(true);
+    setError('');
+    setResult(null);
+
+    const usingGPS = sourceCoords && !sourceEdited;
+
+    try {
+      const res = await axios.post('http://127.0.0.1:5000/api/emergency-route', {
+        source: usingGPS ? sourceCoords : source,
+        destination: destination,
+        vehicle_type: vehicleType
+      });
+      setResult(res.data);
+    } catch (e) {
+      setError(e.response?.data?.error || 'Could not find a route between these locations.');
+    }
+    setLoading(false);
+  }
+
+  const bounds = result ? [result.source_coords, result.destination_coords, ...result.coordinates] : null;
+
+  return (
+    <div className="route-optimizer">
+      <div className="search-row">
+        <button
+          className={'tab-btn ' + (vehicleType === 'ambulance' ? 'tab-active' : '')}
+          onClick={() => setVehicleType('ambulance')}
+        >
+          🚑 Ambulance
+        </button>
+        <button
+          className={'tab-btn ' + (vehicleType === 'fire' ? 'tab-active' : '')}
+          onClick={() => setVehicleType('fire')}
+        >
+          🚒 Fire Brigade
+        </button>
+      </div>
+
+      <div className="search-row">
+        <input
+          className="search-input"
+          type="text"
+          placeholder={locating ? 'Detecting your location...' : 'From...'}
+          value={source}
+          onChange={(e) => {
+            setSource(e.target.value);
+            setSourceEdited(true);
+          }}
+        />
+        <button
+          className="search-btn"
+          onClick={() => {
+            setSourceEdited(false);
+            getLocation();
+          }}
+          disabled={locating}
+        >
+          {locating ? '...' : '📍'}
+        </button>
+        <input
+          className="search-input"
+          type="text"
+          placeholder="To..."
+          value={destination}
+          onChange={(e) => setDestination(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') findRoute(); }}
+        />
+        <button className="search-btn" onClick={findRoute} disabled={loading}>
+          {loading ? 'Clearing route...' : 'Dispatch'}
+        </button>
+      </div>
+
+      {error && <p className="empty-sub">{error}</p>}
+
+      {result && (
+        <div className="content-grid">
+          <div className="result-panel">
+            <div className="result-card" style={{ border: '2px solid #e74c3c' }}>
+              <div className="result-header">
+                <span className="result-pin">🚨</span>
+                <h2 className="result-location">
+                  {vehicleType === 'ambulance' ? 'Ambulance' : 'Fire Brigade'} Route
+                </h2>
+              </div>
+
+              <span className="result-status-badge status-clear">Corridor Cleared</span>
+
+              <div className="stat-rows">
+                <div className="stat-row">
+                  <span className="stat-row-label">Distance</span>
+                  <span className="stat-row-value">{result.distance_km} km</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-row-label">ETA (cleared)</span>
+                  <span className="stat-row-value score-clear">{result.duration_min} min</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-row-label">Normal ETA</span>
+                  <span className="stat-row-value">{result.normal_duration_min} min</span>
+                </div>
+                <div className="stat-row">
+                  <span className="stat-row-label">Time saved</span>
+                  <span className="stat-row-value score-clear">{result.time_saved_min} min</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="pred-section">
+              <p className="pred-title">Route ahead</p>
+              {result.segments.map((seg, i) => (
+                <div key={i} className="history-item">
+                  <span className="history-location">{seg.distance_km} km in</span>
+                  <span className="history-badge status-clear">Cleared</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="map-panel">
+            <MapContainer center={result.source_coords} zoom={12} style={{ height: '500px', width: '100%', borderRadius: '12px' }}>
+              <TileLayer
+                attribution='&copy; OpenStreetMap contributors'
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
+
+              <MapReadyHandler bounds={bounds} />
+
+              <Marker position={result.source_coords}>
+                <Popup>Dispatch point: {source}</Popup>
+              </Marker>
+              <Marker position={result.destination_coords}>
+                <Popup>Destination: {destination}</Popup>
+              </Marker>
+
+              <Polyline
+                positions={result.coordinates}
+                pathOptions={{ color: '#e74c3c', weight: 7, opacity: 0.9, dashArray: '14, 10' }}
+              />
+            </MapContainer>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default EmergencyRoute;

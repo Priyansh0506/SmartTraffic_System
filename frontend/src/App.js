@@ -1,30 +1,51 @@
 import React, { useState } from 'react';
 import axios from 'axios';
-import MapView from './MapView';
+import SmartMap from './SmartMap';
 import DemoSection from './DemoSection';
 import './App.css';
+import RouteOptimizer from './RouteOptimizer';
+import EmergencyRoute from './EmergencyRoute';
+import Home from './Home';
+import PeakHourChart from './PeakHourChart';
 
 function App() {
   const [searchLocation, setSearchLocation] = useState('');
   const [searchResult, setSearchResult] = useState(null);
   const [searchHistory, setSearchHistory] = useState([]);
   const [searching, setSearching] = useState(false);
-  const [activeTab, setActiveTab] = useState('monitor'); // 'monitor' | 'demo'
+  const [activeTab, setActiveTab] = useState('home');
+  const [accidentRisk, setAccidentRisk] = useState(null);
+  const [riskLoading, setRiskLoading] = useState(false);
 
   const searchTraffic = async () => {
     if (!searchLocation.trim()) return;
     setSearching(true);
+    setAccidentRisk(null);
     try {
       const res = await axios.post('http://127.0.0.1:5000/api/predict', {
         location: searchLocation
       });
-      const result = { location: searchLocation, ...res.data };
+
+      // reuse the lat/lon we already got, no need to geocode again
+      setRiskLoading(true);
+      const riskRes = await axios.post('http://127.0.0.1:5000/api/accident-risk', {
+        location: searchLocation,
+        lat: res.data.lat,
+        lon: res.data.lon,
+        vehicle_count: res.data.vehicle_count,
+        weather: res.data.weather
+      });
+
+      // accident_risk ab result ke andar hi save hoga, isliye history me bhi jayega
+      const result = { location: searchLocation, ...res.data, accident_risk: riskRes.data };
       setSearchResult(result);
       setSearchHistory(prev => [result, ...prev.slice(0, 9)]);
+      setAccidentRisk(riskRes.data);
     } catch (err) {
       alert('Location not found.');
     } finally {
       setSearching(false);
+      setRiskLoading(false);
     }
   };
 
@@ -32,6 +53,18 @@ function App() {
     if (score <= 3) return { label: 'Clear', cls: 'status-clear', scoreCls: 'score-clear' };
     if (score <= 6) return { label: 'Moderate', cls: 'status-moderate', scoreCls: 'score-moderate' };
     return { label: 'Heavy', cls: 'status-heavy', scoreCls: 'score-heavy' };
+  };
+
+  const getRiskColor = (level) => {
+    if (level === 'Low') return '#4ade80';
+    if (level === 'Moderate') return '#fb923c';
+    return '#f87171';
+  };
+
+  // when user clicks a history item, pull its saved risk data back too
+  const selectHistoryItem = (item) => {
+    setSearchResult(item);
+    setAccidentRisk(item.accident_risk || null);
   };
 
   return (
@@ -44,6 +77,12 @@ function App() {
           </div>
           <div className="tab-row">
             <button
+              className={`tab-btn ${activeTab === 'home' ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab('home')}
+            >
+              Home
+            </button>
+            <button
               className={`tab-btn ${activeTab === 'monitor' ? 'tab-active' : ''}`}
               onClick={() => setActiveTab('monitor')}
             >
@@ -55,9 +94,25 @@ function App() {
             >
               Demo Evaluation
             </button>
+            <button
+              className={`tab-btn ${activeTab === 'route' ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab('route')}
+            >
+              Route Optimizer
+            </button>
+            <button
+              className={`tab-btn ${activeTab === 'emergency' ? 'tab-active' : ''}`}
+              onClick={() => setActiveTab('emergency')}
+            >
+              🚨 Emergency
+            </button>
           </div>
         </div>
       </header>
+
+      {activeTab === 'home' && (
+        <Home onNavigate={(tab) => setActiveTab(tab)} />
+      )}
 
       {activeTab === 'monitor' && (
         <main className="app-main">
@@ -114,6 +169,7 @@ function App() {
                           {searchResult.prediction_30min}/10
                         </p>
                       </div>
+                      <PeakHourChart lat={searchResult.lat} lon={searchResult.lon} />
                       <div className="pred-item">
                         <p className="pred-label">60 min</p>
                         <p className={`pred-value ${getStatus(searchResult.prediction_60min).scoreCls}`}>
@@ -121,6 +177,37 @@ function App() {
                         </p>
                       </div>
                     </div>
+                  </div>
+
+                  {/* accident risk section */}
+                  <div className="pred-section" style={{ marginTop: 16 }}>
+                    <p className="pred-title">Accident Risk</p>
+                    {riskLoading && (
+                      <p style={{ fontSize: 12, color: '#6b7280' }}>Checking...</p>
+                    )}
+                    {accidentRisk && !riskLoading && (
+                      <div style={{
+                        background: '#111318',
+                        border: `1px solid ${getRiskColor(accidentRisk.risk_level)}33`,
+                        borderRadius: 8,
+                        padding: '14px 16px',
+                        marginTop: 8
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: getRiskColor(accidentRisk.risk_level) }}>
+                            {accidentRisk.risk_level} Risk
+                          </span>
+                          <span style={{ fontSize: 18, fontWeight: 700, color: getRiskColor(accidentRisk.risk_level) }}>
+                            {accidentRisk.risk_score}/10
+                          </span>
+                        </div>
+                        <ul style={{ marginTop: 10, paddingLeft: 18, fontSize: 12, color: '#9ca3af' }}>
+                          {accidentRisk.factors.map((f, i) => (
+                            <li key={i} style={{ marginBottom: 4 }}>{f}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -136,7 +223,7 @@ function App() {
                   {searchHistory.slice(1).map((item, i) => {
                     const s = getStatus(item.current_score);
                     return (
-                      <div key={i} className="history-item" onClick={() => setSearchResult(item)}>
+                      <div key={i} className="history-item" onClick={() => selectHistoryItem(item)}>
                         <span className="history-location">{item.location}</span>
                         <span className={`history-badge ${s.cls}`}>{s.label}</span>
                       </div>
@@ -147,13 +234,17 @@ function App() {
             </div>
 
             <div className="map-panel">
-              <MapView searchResult={searchResult} searchHistory={searchHistory} />
+              <SmartMap searchResult={searchResult} searchHistory={searchHistory} />
             </div>
           </div>
         </main>
       )}
 
       {activeTab === 'demo' && <DemoSection />}
+
+      {activeTab === 'route' && <RouteOptimizer />}
+
+      {activeTab === 'emergency' && <EmergencyRoute />}
     </div>
   );
 }
