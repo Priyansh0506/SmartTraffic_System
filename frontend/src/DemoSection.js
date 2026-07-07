@@ -3,6 +3,7 @@ import axios from 'axios';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import PeakHourChart from './PeakHourChart';
+import API_BASE from './apiConfig';
 
 function ResultRing({ value, label, color }) {
   const r = 28;
@@ -111,7 +112,7 @@ function DemoSection() {
     formData.append('video', file);
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/demo/analyze', formData, {
+      const res = await axios.post(`${API_BASE}/api/demo/analyze`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         timeout: 120000
       });
@@ -137,7 +138,7 @@ function DemoSection() {
     setAccidentRisk(null);
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/demo/route', {
+      const res = await axios.post(`${API_BASE}/api/demo/route`, {
         source: routeSource,
         destination: routeDestination,
         vehicle_count: v.vehicle_count,
@@ -152,7 +153,7 @@ function DemoSection() {
       if (!emergencyMode && res.data.source_coords) {
         setRiskLoading(true);
         try {
-          const riskRes = await axios.post('http://127.0.0.1:5000/api/accident-risk', {
+          const riskRes = await axios.post(`${API_BASE}/api/accident-risk`, {
             location: routeSource,
             lat: res.data.source_coords[0],
             lon: res.data.source_coords[1]

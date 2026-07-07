@@ -87,8 +87,8 @@ function MapView({ searchResult, searchHistory = [] }) {
         const isActive = searchResult?.location === item.location;
 
         // prediction scores - fallback to current score if backend didn't send them
-        const score30 = item.predict_30min ?? item.current_score;
-        const score60 = item.predict_60min ?? item.current_score;
+        const score30 = item.prediction_30min ?? item.current_score;
+        const score60 = item.prediction_60min ?? item.current_score;
 
         return (
           <Circle

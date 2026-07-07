@@ -139,6 +139,35 @@ body {
 }
 .map-panel .leaflet-container { height: 100%; width: 100%; }
 
+/* skeleton loaders */
+.skeleton {
+  background: linear-gradient(90deg, #1a1d24 25%, #22252d 37%, #1a1d24 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+  border-radius: 6px;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+
+.skeleton-card {
+  background: #1a1d24; border: 1px solid #1f2128;
+  border-radius: 8px; padding: 18px;
+}
+.skeleton-badge { width: 70px; height: 18px; margin-bottom: 14px; }
+.skeleton-title { width: 55%; height: 16px; margin-bottom: 12px; }
+.skeleton-row { height: 13px; margin-bottom: 10px; }
+.skeleton-row:nth-child(1) { width: 90%; }
+.skeleton-row:nth-child(2) { width: 75%; }
+.skeleton-row:nth-child(3) { width: 60%; }
+.skeleton-pred-row { display: flex; gap: 12px; margin-top: 16px; }
+.skeleton-pred-box { flex: 1; height: 44px; }
+.skeleton-map {
+  height: 100%;
+  width: 100%;
+}
+
 /* tabs */
 .tab-row {
   display: flex; gap: 4px;

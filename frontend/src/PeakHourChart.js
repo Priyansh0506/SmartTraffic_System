@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import axios from 'axios';
+import API_BASE from './apiConfig';
 
 function barColor(score, isCurrent) {
   if (isCurrent) return '#60a5fa';
@@ -14,14 +15,6 @@ function formatHour(h) {
   return `${display}${period}`;
 }
 
-// 24-hour congestion bar chart, hidden behind a toggle button so it
-// doesn't clutter the result card by default.
-//
-// Two ways to feed it data:
-//   1) pass lat + lon  -> it calls /api/peak-hours itself (Live Monitor)
-//   2) pass data directly, shape { weather, current_hour, profile }
-//      -> no API call, used when the caller already has the numbers
-//         (Demo Evaluation, from the uploaded video's own analysis)
 function PeakHourChart({ lat, lon, data }) {
   const [open, setOpen] = useState(false);
   const [profile, setProfile] = useState(data || null);
@@ -38,7 +31,7 @@ function PeakHourChart({ lat, lon, data }) {
     let cancelled = false;
     setLoading(true);
 
-    axios.post('http://127.0.0.1:5000/api/peak-hours', { lat, lon })
+    axios.post(`${API_BASE}/api/peak-hours`, { lat, lon })
       .then(res => {
         if (!cancelled) setProfile(res.data);
       })
@@ -52,7 +45,6 @@ function PeakHourChart({ lat, lon, data }) {
     return () => { cancelled = true; };
   }, [open, lat, lon, data]);
 
-  // in fetch-mode there's nothing to show until we have a location
   if (!data && (!lat || !lon)) return null;
 
   const peakHours = profile
@@ -64,9 +56,6 @@ function PeakHourChart({ lat, lon, data }) {
     : null;
 
   return (
-    // isolate() + width:100% + border-box stop this block from ever
-    // depending on / overlapping whatever flex/grid context the parent
-    // card is using - it always reserves its own full-width space
     <div
       style={{
         marginTop: 18,
@@ -94,8 +83,7 @@ function PeakHourChart({ lat, lon, data }) {
           alignItems: 'center',
           textAlign: 'left',
           gap: 12,
-          minWidth: 0,
-          boxSizing: 'border-box'
+          minWidth: 0
         }}
       >
         <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>Peak Hour Analysis</span>
@@ -127,12 +115,10 @@ function PeakHourChart({ lat, lon, data }) {
 
           {profile && (
             <>
-              {/* fixed-height reserved tooltip row above the bars so
-                  hovering never pushes/overlaps anything below it */}
               <div style={{ height: 20, marginBottom: 4 }}>
                 {hovered && (
                   <p style={{ fontSize: 11, color: '#9ca3af', margin: 0 }}>
-                    {formatHour(hovered.hour)} — {hovered.congestion_score}/10
+                    {formatHour(hovered.hour)} - {hovered.congestion_score}/10
                     {hovered.is_peak ? ' (peak)' : ''}
                   </p>
                 )}

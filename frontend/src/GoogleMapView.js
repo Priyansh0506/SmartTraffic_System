@@ -4,7 +4,6 @@ import { GoogleMap, Circle, InfoWindow, TrafficLayer } from '@react-google-maps/
 const containerStyle = { width: '100%', height: '100%' };
 const defaultCenter = { lat: 28.6, lng: 77.2 };
 
-// color based on congestion score
 function circleColor(score) {
   if (score <= 3) return '#4ade80';
   if (score <= 6) return '#fb923c';
@@ -17,8 +16,6 @@ function statusText(score) {
   return 'Heavy';
 }
 
-// shows what traffic will look like 30 and 60 min later
-// uses the prediction scores from backend (predict_30min, predict_60min)
 function PredictionRow({ label, score }) {
   const color = circleColor(score);
   return (
@@ -31,9 +28,8 @@ function PredictionRow({ label, score }) {
   );
 }
 
-// Google Maps version of the map.
-// Shows live Google traffic on roads (TrafficLayer) + our own prediction
-// circles on top. Clicking a circle shows current + 30min + 60min prediction.
+// shows google's live traffic layer plus our own prediction circles
+// on top, click a circle to see current + 30/60 min prediction
 function GoogleMapView({ searchResult, searchHistory = [] }) {
   const [activeMarker, setActiveMarker] = useState(null);
   const mapRef = useRef(null);
@@ -46,7 +42,6 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
     mapRef.current = null;
   }, []);
 
-  // pan to location when user searches something new
   useEffect(() => {
     if (searchResult && searchResult.lat && searchResult.lon && mapRef.current) {
       mapRef.current.panTo({
@@ -66,7 +61,6 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
       onUnmount={onUnmount}
       options={{ streetViewControl: false, mapTypeControl: false }}
     >
-      {/* Google's live traffic layer - shows green/yellow/red on actual roads */}
       <TrafficLayer />
 
       {searchHistory.map((item, i) => {
@@ -79,9 +73,8 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
           lng: parseFloat(item.lon)
         };
 
-        // prediction scores - backend sends these, fallback to current if missing
-        const score30 = item.predict_30min ?? item.current_score;
-        const score60 = item.predict_60min ?? item.current_score;
+        const score30 = item.prediction_30min ?? item.current_score;
+        const score60 = item.prediction_60min ?? item.current_score;
 
         return (
           <React.Fragment key={i}>
@@ -105,12 +98,10 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
               >
                 <div style={{ fontFamily: 'Inter, sans-serif', minWidth: 190, padding: 2 }}>
 
-                  {/* location name */}
                   <p style={{ fontWeight: 700, fontSize: 13, marginBottom: 8, color: '#1e293b', textTransform: 'capitalize' }}>
                     📍 {item.location}
                   </p>
 
-                  {/* current stats */}
                   <div style={{ background: '#f8fafc', borderRadius: 6, padding: '6px 8px', marginBottom: 8 }}>
                     <p style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>RIGHT NOW</p>
                     <p style={{ fontSize: 12, color: '#475569', marginBottom: 2 }}>Vehicles: {item.vehicle_count}</p>
@@ -120,13 +111,11 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
                     </p>
                   </div>
 
-                  {/* prediction section */}
                   <div style={{ background: '#f8fafc', borderRadius: 6, padding: '6px 8px' }}>
                     <p style={{ fontSize: 11, color: '#94a3b8', marginBottom: 6 }}>PREDICTION</p>
                     <PredictionRow label="After 30 min" score={score30} />
                     <PredictionRow label="After 60 min" score={score60} />
 
-                    {/* simple message so user understands in one line */}
                     <p style={{ fontSize: 10, color: '#94a3b8', marginTop: 6, borderTop: '1px solid #e2e8f0', paddingTop: 4 }}>
                       {score60 > item.current_score
                         ? '⚠️ Traffic will increase in next 1 hour'
