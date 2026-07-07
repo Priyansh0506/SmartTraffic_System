@@ -1,19 +1,7 @@
-"""
-generate_data.py
-
-This script generates synthetic training data by running our existing
-rule-based congestion formula thousands of times with random inputs.
-This CSV becomes the "training dataset" for the TensorFlow model.
-
-Basic idea: run the formula on 5000 different random situations,
-save each situation's input (vehicle_count, weather, hour) and
-output (congestion_score) to a CSV file.
-"""
-
 import csv
 import random
 
-# ---------- Same rule-based formula already used in the project ----------
+# same rule based formula that was already there in the project
 def predict_congestion(vehicle_count, weather, hour):
     base_score = vehicle_count / 8
 
@@ -29,10 +17,8 @@ def predict_congestion(vehicle_count, weather, hour):
 
     congestion_score = min(round(base_score, 1), 10.0)
     return congestion_score
-# ------------------------------------------------------------------------
 
-# Weather needs to be converted to a number, since a neural network
-# only understands numbers, not text
+
 WEATHER_TO_NUMBER = {
     "Clear": 0,
     "Cloudy": 1,
@@ -40,21 +26,18 @@ WEATHER_TO_NUMBER = {
     "Foggy": 3,
 }
 
+
 def generate_dataset(num_rows=5000, output_file="traffic_data.csv"):
     rows = []
 
     for _ in range(num_rows):
-        # generate random input values
         vehicle_count = random.randint(0, 120)
         weather = random.choice(list(WEATHER_TO_NUMBER.keys()))
         hour = random.randint(0, 23)
 
-        # adding a bit of realistic noise/randomness so the model
-        # doesn't just memorize the formula exactly, but generalizes
-        # a little too (real-world data always has some variation)
+        # small noise so model doesn't just memorize the formula
         noise = random.uniform(-0.3, 0.3)
 
-        # get the target score from the actual formula
         score = predict_congestion(vehicle_count, weather, hour)
         score = max(0, min(10, round(score + noise, 1)))
 
@@ -65,7 +48,6 @@ def generate_dataset(num_rows=5000, output_file="traffic_data.csv"):
             "congestion_score": score
         })
 
-    # save to CSV file
     with open(output_file, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["vehicle_count", "weather", "hour", "congestion_score"])
         writer.writeheader()

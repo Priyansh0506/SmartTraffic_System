@@ -2,8 +2,12 @@ flask
 flask-cors
 mysql-connector-python
 requests
-opencv-python
+opencv-python-headless
 numpy
+pandas
+scikit-learn
+joblib
 tensorflow
 python-dotenv
 ultralytics
+gunicorn

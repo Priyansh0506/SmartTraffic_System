@@ -57,7 +57,10 @@ def count_vehicles(lat=29.9457, lon=78.1642):
             ratios.append(ratio)
 
     if ratios:
-        avg_ratio = sum(ratios) / len(ratios)
+        total = 0
+        for r in ratios:
+            total = total + r
+        avg_ratio = total / len(ratios)
         congestion_factor = 1 - avg_ratio
 
         # base vehicles scaled by time of day + live congestion

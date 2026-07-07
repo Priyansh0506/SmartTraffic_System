@@ -35,7 +35,7 @@ def predict():
     lat = data.get('lat', None)
     lon = data.get('lon', None)
 
-    if not lat or not lon:
+    if lat is None or lon is None:
         search_url = (
             f"https://api.tomtom.com/search/2/search/{location}.json"
             f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"

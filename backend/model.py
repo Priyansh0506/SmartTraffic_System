@@ -53,6 +53,7 @@ def predict_congestion(vehicle_count, weather, hour):
             input_scaled = _scaler.transform(input_data)
             prediction = model.predict(input_scaled, verbose=0)
             score = float(prediction[0][0])
+            #print("raw score", score)
             score = max(0.0, min(10.0, round(score, 1)))
             return score
         except Exception as e:

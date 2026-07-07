@@ -16,7 +16,7 @@ def accident_risk():
     lat = data.get('lat')
     lon = data.get('lon')
 
-    if not lat or not lon:
+    if lat is None or lon is None:
         url = f"https://api.tomtom.com/search/2/search/{location}.json?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"
         res = requests.get(url, timeout=5)
         res_data = res.json()

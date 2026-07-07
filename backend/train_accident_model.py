@@ -27,7 +27,7 @@ weather_map = {
     "Rainy": "Rainy",
     "Foggy": "Foggy",
     "Hazy": "Foggy",     # closest match, both = bad visibility
-    "Stormy": "Rainy"    # closest match
+    "Stormy": "Rainy"
 }
 data["weather_mapped"] = data["Weather Condition"].map(weather_map).fillna("Clear")
 
@@ -35,35 +35,27 @@ WEATHER_TO_NUMBER = {"Clear": 0, "Cloudy": 1, "Rainy": 2, "Foggy": 3}
 data["weather_num"] = data["weather_mapped"].map(WEATHER_TO_NUMBER)
 
 data["hour"] = data["Time of Day"].str.split(":").str[0].astype(int)
-
 data["vehicle_count_scaled"] = data["Number of Vehicles Involved"] * 12
 
 X_accidents = data[["vehicle_count_scaled", "weather_num", "hour"]].values
 y_accidents = data["risk_score"].values
 
-# ---- synthetic "safe" examples ----
-# the CSV only contains rows where an accident already happened, so every
-# training example had a target of at least 3 (severity_base). the model
-# never saw a genuinely low-risk situation, so it learned to always predict
-# high regardless of input. we fix that by generating plausible "nothing
-# went wrong" traffic scenarios and giving them low target scores, so the
-# model has something to contrast against.
+# the csv only has rows where an accident already happened, so every
+# row has a target of 3+. model never sees a low risk case and just
+# learns to predict high always. fixing this by making up some safe
+# scenarios below and giving them low scores as contrast
 rng = np.random.default_rng(42)
-N_SAFE = len(data) * 2  # give the model more contrast examples to learn from
+N_SAFE = len(data) * 2
 
 safe_hour = rng.integers(0, 24, N_SAFE)
 safe_weather_num = rng.choice([0, 1, 2, 3], size=N_SAFE, p=[0.55, 0.25, 0.15, 0.05])
-# widened to 150 to cover the live app's real vehicle_count range
-# (BASE_VEHICLES=35 * time_multiplier * congestion_factor can reach ~120+)
+# 150 covers the max vehicle_count the live app can actually send
 safe_vehicle_scaled = rng.uniform(5, 150, N_SAFE)
 
 is_peak = np.isin(safe_hour, [8, 9, 17, 18, 19])
 is_night = (safe_hour >= 22) | (safe_hour <= 4)
-traffic_load = safe_vehicle_scaled / 150.0  # 0-1, more vehicles = more exposure
+traffic_load = safe_vehicle_scaled / 150.0
 
-# mostly low risk (0-3) at low load, but scales up with vehicle load so the
-# model actually learns "more traffic + bad weather + peak = higher risk"
-# instead of only ever seeing low-traffic "safe" examples
 safe_risk = (
     rng.uniform(0.2, 1.5, N_SAFE)
     + traffic_load * rng.uniform(2.0, 4.0, N_SAFE)

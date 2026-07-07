@@ -15,11 +15,7 @@ COORD_PATTERN = re.compile(r"^\s*(-?\d+(\.\d+)?)\s*,\s*(-?\d+(\.\d+)?)\s*$")
 
 
 def geocode_location(place_name):
-    """
-    Converts a place into (lat, lon). If the input is already a
-    "lat,lon" pair, it's used directly - skips Nominatim entirely so
-    precise GPS coordinates never fail to resolve.
-    """
+    # if user already passed "lat,lon" directly, use that and skip nominatim
     match = COORD_PATTERN.match(place_name)
     if match:
         return float(match.group(1)), float(match.group(3))
@@ -72,12 +68,8 @@ def haversine_km(p1, p2):
 
 
 def offset_waypoint(source_coords, dest_coords, side):
-    """
-    Picks a point off to one side of the direct source-to-destination line.
-    Routing OSRM through this point nudges it onto a genuinely different
-    road than the default shortest path - this is what lets us get real
-    alternate routes even when OSRM's own "alternatives" flag only finds one.
-    """
+    # pushes a point off to one side of the direct line so OSRM is
+    # forced onto a different road when routed through it
     mid_lat = (source_coords[0] + dest_coords[0]) / 2
     mid_lon = (source_coords[1] + dest_coords[1]) / 2
 
@@ -87,13 +79,12 @@ def offset_waypoint(source_coords, dest_coords, side):
     if length == 0:
         return mid_lat, mid_lon
 
-    # perpendicular direction to the source-destination line
     perp_lat = -dlon / length
     perp_lon = dlat / length
 
     trip_km = haversine_km(source_coords, dest_coords)
-    offset_km = max(2, trip_km * 0.18)  # how far off the direct line to push the detour
-    offset_deg = offset_km / 111  # rough km-to-degrees conversion
+    offset_km = max(2, trip_km * 0.18)
+    offset_deg = offset_km / 111  # rough km to degrees
 
     return mid_lat + perp_lat * offset_deg * side, mid_lon + perp_lon * offset_deg * side
 
@@ -145,15 +136,12 @@ def score_route_congestion(coords):
         })
 
     avg_score = round(sum(scores) / len(scores), 1) if scores else 5.0
+    # print("scores:", scores)
     return avg_score, segments
 
 
 def call_osrm(coord_chain, alternatives=True):
-    """
-    coord_chain is a list of (lat, lon) tuples - 2 points for a direct
-    route, 3 for a route forced through a waypoint. Returns the raw
-    OSRM route list, or None on failure.
-    """
+    # coord_chain: 2 points for direct route, 3 if routed through a waypoint
     points_str = ";".join(f"{lon},{lat}" for lat, lon in coord_chain)
     url = f"{OSRM_URL}/{points_str}"
     params = {
@@ -175,10 +163,7 @@ def call_osrm(coord_chain, alternatives=True):
 
 
 def is_duplicate_route(candidate, existing_routes):
-    """
-    Two routes that end up with near-identical distance and duration are
-    basically the same road - no point showing both, so we drop one.
-    """
+    # if distance and duration are basically the same, it's the same road
     for r in existing_routes:
         if (abs(r["distance"] - candidate["distance"]) < 800
                 and abs(r["duration"] - candidate["duration"]) < 90):
@@ -187,11 +172,8 @@ def is_duplicate_route(candidate, existing_routes):
 
 
 def collect_route_candidates(source_coords, dest_coords):
-    """
-    Tries to gather at least MAX_ROUTES genuinely different road options.
-    Starts with OSRM's own alternatives, then if that's not enough,
-    forces detours through waypoints on either side of the direct path.
-    """
+    # try OSRM's built in alternatives first, then force detours via
+    # waypoints on either side if we still don't have enough routes
     candidates = []
 
     direct_routes, error = call_osrm([source_coords, dest_coords])
