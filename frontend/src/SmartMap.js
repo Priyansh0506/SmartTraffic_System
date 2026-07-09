@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { LoadScript } from '@react-google-maps/api';
+import { useJsApiLoader } from '@react-google-maps/api';
 import GoogleMapView from './GoogleMapView';
 import MapView from './MapView';
 
@@ -9,6 +9,10 @@ const GOOGLE_MAPS_KEY = process.env.REACT_APP_GOOGLE_MAPS_KEY;
 // missing or google maps fails to load (quota, invalid key etc)
 const GOOGLE_LIBRARIES = ['visualization'];
 
+// useJsApiLoader keeps a single shared script instance across the app,
+// so it survives React.StrictMode's double-mount in dev without the
+// "google api is already presented" / "already defined" errors that
+// <LoadScript> throws when it gets mounted twice.
 function SmartMap(props) {
   const [googleFailed, setGoogleFailed] = useState(false);
 
@@ -26,24 +30,27 @@ function SmartMap(props) {
     };
   }, [handleLoadError]);
 
-  if (!GOOGLE_MAPS_KEY || GOOGLE_MAPS_KEY === 'your_google_maps_key_here') {
+  const hasKey = GOOGLE_MAPS_KEY && GOOGLE_MAPS_KEY !== 'your_google_maps_key_here';
+
+  const { isLoaded, loadError } = useJsApiLoader({
+    id: 'google-map-script',
+    googleMapsApiKey: hasKey ? GOOGLE_MAPS_KEY : '',
+    libraries: GOOGLE_LIBRARIES,
+  });
+
+  if (!hasKey) {
     return <MapView {...props} />;
   }
 
-  if (googleFailed) {
+  if (googleFailed || loadError) {
     return <MapView {...props} />;
   }
 
-  return (
-    <LoadScript
-      googleMapsApiKey={GOOGLE_MAPS_KEY}
-      libraries={GOOGLE_LIBRARIES}
-      onError={handleLoadError}
-      loadingElement={<div style={{ height: '100%', width: '100%', background: '#1a1d24' }} />}
-    >
-      <GoogleMapView {...props} />
-    </LoadScript>
-  );
+  if (!isLoaded) {
+    return <div style={{ height: '100%', width: '100%', background: '#1a1d24' }} />;
+  }
+
+  return <GoogleMapView {...props} />;
 }
 
 export default SmartMap;

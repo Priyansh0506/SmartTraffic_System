@@ -15,14 +15,34 @@ TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 
 
 def pick_best_match(results, query):
-    query_words = [w for w in query.lower().split() if len(w) > 2]
+    query_norm = query.strip().lower()
+    query_words = [w for w in query_norm.split() if len(w) > 2]
 
     def overlap_score(r):
-        name = (r.get('poi', {}).get('name') or '').lower()
-        address = (r.get('address', {}).get('freeformAddress') or '').lower()
-        combined = f"{name} {address}"
+        addr = r.get('address', {})
+        poi = r.get('poi', {})
+        name = (poi.get('name') or '').lower()
+        municipality = (addr.get('municipality') or '').lower()
+        locality = (addr.get('localName') or '').lower()
+        freeform = (addr.get('freeformAddress') or '').lower()
+        combined = f"{name} {freeform}"
+        result_type = r.get('type', '')  # 'Geography', 'Street', 'POI', 'Point Address', etc.
+
+        # exact match on the actual town/city/village name is the strongest
+        # signal - this is what was missing before, so "Laksar Road" (a
+        # street in Haryana) could outrank the real Laksar town in Haridwar
+        exact_place = 1 if query_norm in (municipality, locality, name) else 0
+
+        # real places (towns/villages/districts) should win over streets,
+        # unless the user actually typed "road"/"street" themselves
+        wants_street = 'road' in query_norm or 'street' in query_norm or 'marg' in query_norm
+        is_street = result_type == 'Street'
+        street_penalty = -5 if (is_street and not wants_street) else 0
+        type_bonus = 2 if result_type in ('Geography', 'Point Address') else 0
+
         word_hits = sum(1 for w in query_words if w in combined)
-        return (word_hits, r.get('score', 0))
+
+        return (exact_place, street_penalty + type_bonus, word_hits, r.get('score', 0))
 
     ranked = sorted(results, key=overlap_score, reverse=True)
     return ranked[0]
