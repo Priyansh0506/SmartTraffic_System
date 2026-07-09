@@ -6,6 +6,7 @@ from vehicle_count import count_vehicles
 from dotenv import load_dotenv
 import datetime
 import requests
+from urllib.parse import quote
 
 load_dotenv()
 
@@ -15,34 +16,14 @@ TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 
 
 def pick_best_match(results, query):
-    query_norm = query.strip().lower()
-    query_words = [w for w in query_norm.split() if len(w) > 2]
+    query_words = [w for w in query.lower().split() if len(w) > 2]
 
     def overlap_score(r):
-        addr = r.get('address', {})
-        poi = r.get('poi', {})
-        name = (poi.get('name') or '').lower()
-        municipality = (addr.get('municipality') or '').lower()
-        locality = (addr.get('localName') or '').lower()
-        freeform = (addr.get('freeformAddress') or '').lower()
-        combined = f"{name} {freeform}"
-        result_type = r.get('type', '')  # 'Geography', 'Street', 'POI', 'Point Address', etc.
-
-        # exact match on the actual town/city/village name is the strongest
-        # signal - this is what was missing before, so "Laksar Road" (a
-        # street in Haryana) could outrank the real Laksar town in Haridwar
-        exact_place = 1 if query_norm in (municipality, locality, name) else 0
-
-        # real places (towns/villages/districts) should win over streets,
-        # unless the user actually typed "road"/"street" themselves
-        wants_street = 'road' in query_norm or 'street' in query_norm or 'marg' in query_norm
-        is_street = result_type == 'Street'
-        street_penalty = -5 if (is_street and not wants_street) else 0
-        type_bonus = 2 if result_type in ('Geography', 'Point Address') else 0
-
+        name = (r.get('poi', {}).get('name') or '').lower()
+        address = (r.get('address', {}).get('freeformAddress') or '').lower()
+        combined = f"{name} {address}"
         word_hits = sum(1 for w in query_words if w in combined)
-
-        return (exact_place, street_penalty + type_bonus, word_hits, r.get('score', 0))
+        return (word_hits, r.get('score', 0))
 
     ranked = sorted(results, key=overlap_score, reverse=True)
     return ranked[0]
@@ -56,12 +37,29 @@ def predict():
     lon = data.get('lon', None)
 
     if lat is None or lon is None:
+        if not TOMTOM_API_KEY:
+            return jsonify({"error": "Server misconfigured: TOMTOM_API_KEY missing"}), 500
+
         search_url = (
-            f"https://api.tomtom.com/search/2/search/{location}.json"
+            f"https://api.tomtom.com/search/2/search/{quote(location)}.json"
             f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"
         )
-        search_response = requests.get(search_url, timeout=5)
-        search_data = search_response.json()
+
+        try:
+            # timeout kept generous since Render free tier can cold-start
+            # and TomTom itself can be slow on first hit after idle
+            search_response = requests.get(search_url, timeout=20)
+            search_data = search_response.json()
+        except requests.RequestException as e:
+            print(f"[predict] TomTom request failed: {e}")
+            return jsonify({"error": "Location search timed out, please try again"}), 504
+        except ValueError:
+            print(f"[predict] TomTom returned non-JSON response: {search_response.text[:200]}")
+            return jsonify({"error": "Location search failed, please try again"}), 502
+
+        if search_response.status_code != 200:
+            print(f"[predict] TomTom error {search_response.status_code}: {search_data}")
+            return jsonify({"error": "Location search failed, please try again"}), 502
 
         results = search_data.get('results', [])
         if not results:

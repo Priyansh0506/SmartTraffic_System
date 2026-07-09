@@ -20,9 +20,19 @@ def geocode_location(place_name):
     if match:
         return float(match.group(1)), float(match.group(3))
 
-    params = {"q": place_name, "format": "json", "limit": 1}
-    res = requests.get(NOMINATIM_URL, params=params, headers=HEADERS, timeout=10)
-    results = res.json()
+    params = {"q": place_name, "format": "json", "limit": 1, "countrycodes": "in"}
+
+    try:
+        # timeout raised so a cold-started Render instance / a slow
+        # Nominatim response doesn't get killed before it can reply
+        res = requests.get(NOMINATIM_URL, params=params, headers=HEADERS, timeout=20)
+        results = res.json()
+    except requests.RequestException as e:
+        print(f"[geocode] Nominatim request failed for '{place_name}': {e}")
+        return None
+    except ValueError:
+        print(f"[geocode] Nominatim returned non-JSON for '{place_name}': {res.text[:200]}")
+        return None
 
     if not results:
         return None
@@ -151,9 +161,15 @@ def call_osrm(coord_chain, alternatives=True):
     }
 
     try:
-        res = requests.get(url, params=params, timeout=10)
+        # same reasoning as geocode_location - give it more room before
+        # giving up, especially right after a Render cold start
+        res = requests.get(url, params=params, timeout=20)
         data = res.json()
-    except requests.RequestException:
+    except requests.RequestException as e:
+        print(f"[osrm] request failed: {e}")
+        return None, "NETWORK_ERROR"
+    except ValueError:
+        print(f"[osrm] non-JSON response: {res.text[:200]}")
         return None, "NETWORK_ERROR"
 
     if data.get("code") != "Ok":
