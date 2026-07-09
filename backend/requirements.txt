@@ -1,13 +1,16 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
 flask
 flask-cors
 mysql-connector-python
 requests
 opencv-python-headless
 numpy
-pandas
 scikit-learn
 joblib
-tensorflow
+tensorflow-cpu
 python-dotenv
+torch
+torchvision
 ultralytics
 gunicorn
