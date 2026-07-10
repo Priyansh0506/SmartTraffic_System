@@ -3,6 +3,7 @@ import axios from 'axios';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { SkeletonCard, SkeletonMap } from './SkeletonCard';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -153,9 +154,23 @@ function RouteOptimizer() {
         </button>
       </div>
 
-      {error && <p className="empty-sub">{error}</p>}
+      {error && !loading && <p className="empty-sub">{error}</p>}
 
-      {result && selectedRoute && (
+      {loading && (
+        <div className="content-grid">
+          <div className="result-panel">
+            <SkeletonCard />
+            <div style={{ marginTop: 14 }}>
+              <SkeletonCard />
+            </div>
+          </div>
+          <div className="map-panel">
+            <SkeletonMap />
+          </div>
+        </div>
+      )}
+
+      {result && selectedRoute && !loading && (
         <div className="content-grid">
           <div className="result-panel">
             <p className="history-label">Top {result.all_routes.length} routes — tap one to preview</p>

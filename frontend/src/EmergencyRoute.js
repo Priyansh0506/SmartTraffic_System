@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import { SkeletonCard, SkeletonMap } from './SkeletonCard';
 
 // same trick as the route optimizer map - leaflet needs a nudge after
 // mount or it renders with the wrong size half the time
@@ -134,9 +135,20 @@ function EmergencyRoute() {
         </button>
       </div>
 
-      {error && <p className="empty-sub">{error}</p>}
+      {error && !loading && <p className="empty-sub">{error}</p>}
 
-      {result && (
+      {loading && (
+        <div className="content-grid">
+          <div className="result-panel">
+            <SkeletonCard />
+          </div>
+          <div className="map-panel">
+            <SkeletonMap />
+          </div>
+        </div>
+      )}
+
+      {result && !loading && (
         <div className="content-grid">
           <div className="result-panel">
             <div className="result-card" style={{ border: '2px solid #e74c3c' }}>
