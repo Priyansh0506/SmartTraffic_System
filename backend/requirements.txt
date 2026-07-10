@@ -4,7 +4,7 @@ mysql-connector-python
 requests
 opencv-python
 numpy
-tensorflow
+tensorflow-cpu
 python-dotenv
 ultralytics
 gunicorn
