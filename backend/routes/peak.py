@@ -13,7 +13,7 @@ def peak_hours():
     lat = data.get('lat')
     lon = data.get('lon')
 
-    if lat is None or lon is None:
+    if not lat or not lon:
         return jsonify({"error": "lat and lon are required"}), 400
 
     weather, wind_speed = get_weather(float(lat), float(lon))

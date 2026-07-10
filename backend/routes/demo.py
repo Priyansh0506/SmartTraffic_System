@@ -1,29 +1,44 @@
 from flask import Blueprint, jsonify, request
 from model import predict_congestion, predict_short_term, get_peak_hour_profile
 from route_optimizer import geocode_location, collect_route_candidates, decode_polyline, status_for_score
+from ultralytics import YOLO
+import cv2
+import numpy as np
 import tempfile
 import os
 import datetime
 
 demo_bp = Blueprint('demo', __name__)
 
+# COCO class ids that count as "vehicle" for this project
 _VEHICLE_CLASS_IDS = {2, 3, 5, 7}  # car, motorcycle, bus, truck
 
 _vehicle_model = None
 
 
 def _get_vehicle_model():
+    """
+    Loaded once and reused across requests - loading yolov8n fresh on
+    every upload would add several seconds of dead time to every
+    analysis for no reason.
+    """
     global _vehicle_model
     if _vehicle_model is None:
-        from ultralytics import YOLO
+        # yolov8n is the smallest/fastest YOLOv8 variant - accurate
+        # enough for counting cars/bikes/buses/trucks and still fast
+        # on CPU, which matters since this runs per uploaded video
         _vehicle_model = YOLO('yolov8n.pt')
     return _vehicle_model
 
 
 def analyze_video_frames(video_path):
-    import cv2
-    import numpy as np
-
+    """
+    Runs real object detection per sampled frame instead of motion-blob
+    counting. Background subtraction used to miss stationary vehicles
+    entirely and merge overlapping ones into a single blob - actual
+    detection doesn't have either problem, it recognizes each vehicle
+    on its own regardless of whether it's moving.
+    """
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
@@ -32,6 +47,9 @@ def analyze_video_frames(video_path):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
 
+    # detection per frame is heavier than background subtraction, so
+    # sample a bit less often (~every 1.5s) - per-frame accuracy more
+    # than makes up for fewer samples
     sample_interval = max(1, int(fps * 1.5))
 
     model = _get_vehicle_model()
@@ -65,10 +83,15 @@ def analyze_video_frames(video_path):
     if not vehicle_counts:
         return None, None
 
+    # real per-frame detections - median gives the "typical" count
+    # across the clip. No percentile-inflation hack needed here like
+    # the old blob-counting method required to compensate for
+    # undercounting.
     avg_vehicles = int(np.median(vehicle_counts))
     avg_brightness = np.mean(brightness_vals)
     avg_blur = np.mean(blur_vals)
 
+    # weather detection from video brightness and blur
     if avg_brightness < 55:
         detected_weather = "Foggy"
     elif avg_blur < 40:
@@ -111,7 +134,7 @@ def analyze_demo():
         now = datetime.datetime.now()
         hour = now.hour
         minute = now.minute
-        is_weekend = now.weekday() >= 5
+        is_weekend = now.weekday() >= 5  # Sat=5, Sun=6
 
         video_score = predict_congestion(video_data['vehicle_count'], video_data['weather'], hour)
 
@@ -120,6 +143,10 @@ def analyze_demo():
             is_weekend=is_weekend
         )
 
+        # same 24hr curve the live-monitor peak-hours route uses - the
+        # only difference is the baseline count/weather comes straight
+        # from this video instead of a lat/lon lookup. No lat/lon here,
+        # so no location_seed - weekday/weekend curve is still applied.
         peak_profile = get_peak_hour_profile(
             video_data['vehicle_count'], video_data['weather'], hour,
             is_weekend=is_weekend
@@ -175,11 +202,16 @@ def demo_route():
         return jsonify({"error": "NO_ROUTES_FOUND"}), 400
 
     if emergency:
+        # don't dodge traffic here, just go whichever way is fastest and
+        # assume it gets cleared for the vehicle
         chosen = routes[0]
         for r in routes:
             if r['duration'] < chosen['duration']:
                 chosen = r
     else:
+        # the video only gives us one vehicle count for the whole clip,
+        # not per-road data, so every candidate route would score the
+        # same anyway - just go with the shortest one
         chosen = routes[0]
         for r in routes:
             if r['distance'] < chosen['distance']:
@@ -192,6 +224,8 @@ def demo_route():
     score = min(10, round(vehicle_count / 20, 1))
     status = status_for_score(score)
 
+    # spread the same score across a few checkpoints along the route so
+    # the UI can still show a "route ahead" style breakdown
     segment_count = 6
     segments = []
     for i in range(segment_count):

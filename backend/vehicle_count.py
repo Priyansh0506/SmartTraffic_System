@@ -25,6 +25,12 @@ def get_flow_for_point(lat, lon):
     )
     try:
         response = requests.get(url, timeout=5)
+        if response.status_code != 200:
+            # this print is the important part - tells us EXACTLY why it's failing
+            # 401/403 -> key invalid or Traffic API not enabled on this key
+            # 429 -> quota/rate limit exceeded
+            print(f"[vehicle_count] TomTom flow API failed: status={response.status_code} body={response.text[:200]}")
+            return None
         data = response.json()
         flow = data['flowSegmentData']
         current_speed = flow['currentSpeed']
@@ -32,7 +38,8 @@ def get_flow_for_point(lat, lon):
         if free_flow_speed == 0:
             return None
         return current_speed / free_flow_speed
-    except Exception:
+    except Exception as e:
+        print(f"[vehicle_count] TomTom flow API exception: {e}")
         return None
 
 
@@ -57,10 +64,7 @@ def count_vehicles(lat=29.9457, lon=78.1642):
             ratios.append(ratio)
 
     if ratios:
-        total = 0
-        for r in ratios:
-            total = total + r
-        avg_ratio = total / len(ratios)
+        avg_ratio = sum(ratios) / len(ratios)
         congestion_factor = 1 - avg_ratio
 
         # base vehicles scaled by time of day + live congestion
@@ -68,5 +72,8 @@ def count_vehicles(lat=29.9457, lon=78.1642):
         return max(vehicle_count, 5)
     else:
         # no TomTom data - estimate from time of day only
+        # (if you're seeing this branch hit every single search, check the
+        # [vehicle_count] error printed above - that's the real bug to fix)
+        print("[vehicle_count] WARNING: all 5 TomTom points failed, using time-only fallback (location ignored)")
         vehicle_count = int(BASE_VEHICLES * time_multiplier)
         return max(vehicle_count, 5)

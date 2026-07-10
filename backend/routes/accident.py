@@ -15,8 +15,12 @@ def accident_risk():
     location = data.get('location', '')
     lat = data.get('lat')
     lon = data.get('lon')
+    # if the frontend already fetched these via /api/predict, reuse them
+    # instead of hitting TomTom again - cuts API usage roughly in half
+    vehicle_count = data.get('vehicle_count')
+    weather = data.get('weather')
 
-    if lat is None or lon is None:
+    if not lat or not lon:
         url = f"https://api.tomtom.com/search/2/search/{location}.json?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"
         res = requests.get(url, timeout=5)
         res_data = res.json()
@@ -29,8 +33,11 @@ def accident_risk():
         lat = best['position']['lat']
         lon = best['position']['lon']
 
-    weather, wind_speed = get_weather(float(lat), float(lon))
-    vehicle_count = count_vehicles(float(lat), float(lon))
+    if weather is None:
+        weather, wind_speed = get_weather(float(lat), float(lon))
+
+    if vehicle_count is None:
+        vehicle_count = count_vehicles(float(lat), float(lon))
 
     now = datetime.datetime.now()
     hour = now.hour

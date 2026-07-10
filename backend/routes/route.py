@@ -10,7 +10,6 @@ def optimize_route_api():
 
     source = data.get("source")
     destination = data.get("destination")
-    print(source, destination)
 
     if not source or not destination:
         return jsonify({"error": "Both source and destination are required"}), 400

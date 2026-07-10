@@ -8,9 +8,11 @@ from routes.route import route_bp
 from routes.peak import peak_bp
 from routes.accident import accident_bp
 
+
 app = Flask(__name__)
 CORS(app)
 
+# register all routes
 app.register_blueprint(traffic_bp)
 app.register_blueprint(predict_bp)
 app.register_blueprint(emergency_bp)
@@ -19,12 +21,9 @@ app.register_blueprint(route_bp)
 app.register_blueprint(peak_bp)
 app.register_blueprint(accident_bp)
 
-
-@app.route("/")
+@app.route('/')
 def home():
     return "Smart Traffic Backend Running!"
 
-
 if __name__ == '__main__':
-    print("starting server...")
     app.run(debug=True)

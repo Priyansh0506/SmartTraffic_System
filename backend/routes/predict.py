@@ -6,7 +6,6 @@ from vehicle_count import count_vehicles
 from dotenv import load_dotenv
 import datetime
 import requests
-from urllib.parse import quote
 
 load_dotenv()
 
@@ -36,30 +35,13 @@ def predict():
     lat = data.get('lat', None)
     lon = data.get('lon', None)
 
-    if lat is None or lon is None:
-        if not TOMTOM_API_KEY:
-            return jsonify({"error": "Server misconfigured: TOMTOM_API_KEY missing"}), 500
-
+    if not lat or not lon:
         search_url = (
-            f"https://api.tomtom.com/search/2/search/{quote(location)}.json"
+            f"https://api.tomtom.com/search/2/search/{location}.json"
             f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"
         )
-
-        try:
-            # timeout kept generous since Render free tier can cold-start
-            # and TomTom itself can be slow on first hit after idle
-            search_response = requests.get(search_url, timeout=20)
-            search_data = search_response.json()
-        except requests.RequestException as e:
-            print(f"[predict] TomTom request failed: {e}")
-            return jsonify({"error": "Location search timed out, please try again"}), 504
-        except ValueError:
-            print(f"[predict] TomTom returned non-JSON response: {search_response.text[:200]}")
-            return jsonify({"error": "Location search failed, please try again"}), 502
-
-        if search_response.status_code != 200:
-            print(f"[predict] TomTom error {search_response.status_code}: {search_data}")
-            return jsonify({"error": "Location search failed, please try again"}), 502
+        search_response = requests.get(search_url, timeout=5)
+        search_data = search_response.json()
 
         results = search_data.get('results', [])
         if not results:
