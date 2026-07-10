@@ -1,7 +1,5 @@
 import numpy as np
 import random
-from tensorflow import keras
-from tensorflow.keras import layers
 import joblib
 import os
 
@@ -19,7 +17,7 @@ WEATHER_TO_NUMBER = {
 }
 
 
-def _build_model_architecture():
+def _build_model_architecture(keras, layers):
     model = keras.Sequential([
         layers.Input(shape=(3,)),
         layers.Dense(16, activation="relu"),
@@ -33,7 +31,9 @@ def load_model():
     global _model, _scaler
     if _model is None:
         try:
-            _model = _build_model_architecture()
+            from tensorflow import keras
+            from tensorflow.keras import layers
+            _model = _build_model_architecture(keras, layers)
             _model.load_weights(_WEIGHTS_PATH)
             _scaler = joblib.load(_SCALER_PATH)
             print("TensorFlow traffic model loaded successfully.")
@@ -53,7 +53,6 @@ def predict_congestion(vehicle_count, weather, hour):
             input_scaled = _scaler.transform(input_data)
             prediction = model.predict(input_scaled, verbose=0)
             score = float(prediction[0][0])
-            #print("raw score", score)
             score = max(0.0, min(10.0, round(score, 1)))
             return score
         except Exception as e:
@@ -181,7 +180,7 @@ _accident_model = None
 _accident_scaler = None
 
 
-def _build_accident_model_architecture():
+def _build_accident_model_architecture(keras, layers):
     model = keras.Sequential([
         layers.Input(shape=(3,)),
         layers.Dense(16, activation="relu"),
@@ -195,7 +194,9 @@ def load_accident_model():
     global _accident_model, _accident_scaler
     if _accident_model is None:
         try:
-            _accident_model = _build_accident_model_architecture()
+            from tensorflow import keras
+            from tensorflow.keras import layers
+            _accident_model = _build_accident_model_architecture(keras, layers)
             _accident_model.load_weights(_ACCIDENT_WEIGHTS_PATH)
             _accident_scaler = joblib.load(_ACCIDENT_SCALER_PATH)
             print("Accident risk model loaded successfully.")
@@ -214,7 +215,6 @@ weather_risk_map = {
 
 
 def _flow_risk(congestion_score):
-    # medium traffic (stop-and-go) is riskier than a full jam
     c = congestion_score
     if c <= 4:
         return 1.0 + (c / 4) * 1.8
@@ -225,7 +225,6 @@ def _flow_risk(congestion_score):
 
 
 def _road_factor(lat, lon):
-    # no real blackspot data, just a consistent per-location number
     if lat is None or lon is None:
         return 0, False
     seed = round(float(lat) * 1000) + round(float(lon) * 1000)

@@ -1,36 +1,29 @@
 from flask import Blueprint, jsonify, request
 from model import predict_congestion, predict_short_term, get_peak_hour_profile
 from route_optimizer import geocode_location, collect_route_candidates, decode_polyline, status_for_score
-from ultralytics import YOLO
-import cv2
-import numpy as np
 import tempfile
 import os
 import datetime
 
 demo_bp = Blueprint('demo', __name__)
 
-# COCO class ids that count as "vehicle" for this project
 _VEHICLE_CLASS_IDS = {2, 3, 5, 7}  # car, motorcycle, bus, truck
 
 _vehicle_model = None
 
 
 def _get_vehicle_model():
-    # load once and reuse - reloading yolov8n on every upload adds a
-    # few seconds of dead time for no reason
     global _vehicle_model
     if _vehicle_model is None:
-        # smallest/fastest yolov8 variant, still good enough for
-        # counting cars/bikes/buses/trucks and fast enough on cpu
+        from ultralytics import YOLO
         _vehicle_model = YOLO('yolov8n.pt')
     return _vehicle_model
 
 
 def analyze_video_frames(video_path):
-    # runs real object detection per sampled frame instead of the old
-    # motion-blob approach, which missed parked vehicles and merged
-    # overlapping ones into a single blob
+    import cv2
+    import numpy as np
+
     cap = cv2.VideoCapture(video_path)
 
     if not cap.isOpened():
@@ -39,8 +32,6 @@ def analyze_video_frames(video_path):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
 
-    # detection is heavier than background subtraction so sample less
-    # often (~every 1.5s), per-frame accuracy makes up for it
     sample_interval = max(1, int(fps * 1.5))
 
     model = _get_vehicle_model()
@@ -74,8 +65,6 @@ def analyze_video_frames(video_path):
     if not vehicle_counts:
         return None, None
 
-    # median count across sampled frames, real detections so no need
-    # for the percentile-inflation hack the old blob method needed
     avg_vehicles = int(np.median(vehicle_counts))
     avg_brightness = np.mean(brightness_vals)
     avg_blur = np.mean(blur_vals)
@@ -122,7 +111,7 @@ def analyze_demo():
         now = datetime.datetime.now()
         hour = now.hour
         minute = now.minute
-        is_weekend = now.weekday() >= 5  # Sat=5, Sun=6
+        is_weekend = now.weekday() >= 5
 
         video_score = predict_congestion(video_data['vehicle_count'], video_data['weather'], hour)
 
@@ -131,8 +120,6 @@ def analyze_demo():
             is_weekend=is_weekend
         )
 
-        # same 24hr curve the live-monitor peak-hours route uses, just
-        # baseline count/weather comes from this video instead of lat/lon
         peak_profile = get_peak_hour_profile(
             video_data['vehicle_count'], video_data['weather'], hour,
             is_weekend=is_weekend
@@ -188,14 +175,11 @@ def demo_route():
         return jsonify({"error": "NO_ROUTES_FOUND"}), 400
 
     if emergency:
-        # don't dodge traffic, just pick fastest and assume it's cleared
         chosen = routes[0]
         for r in routes:
             if r['duration'] < chosen['duration']:
                 chosen = r
     else:
-        # video only gives one vehicle count for the whole clip, not
-        # per-road, so every route would score the same - go shortest
         chosen = routes[0]
         for r in routes:
             if r['distance'] < chosen['distance']:
@@ -208,8 +192,6 @@ def demo_route():
     score = min(10, round(vehicle_count / 20, 1))
     status = status_for_score(score)
 
-    # spread the same score across a few checkpoints so the UI can
-    # still show a route-ahead style breakdown
     segment_count = 6
     segments = []
     for i in range(segment_count):
