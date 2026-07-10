@@ -28,29 +28,34 @@ function PredictionRow({ label, score }) {
   );
 }
 
-// shows google's live traffic layer plus our own prediction circles
-// on top, click a circle to see current + 30/60 min prediction
 function GoogleMapView({ searchResult, searchHistory = [] }) {
   const [activeMarker, setActiveMarker] = useState(null);
   const mapRef = useRef(null);
 
+  const panToResult = useCallback((result) => {
+    if (result && result.lat && result.lon && mapRef.current) {
+      mapRef.current.panTo({
+        lat: parseFloat(result.lat),
+        lng: parseFloat(result.lon)
+      });
+      mapRef.current.setZoom(14);
+    }
+  }, []);
+
   const onLoad = useCallback((map) => {
     mapRef.current = map;
-  }, []);
+    // map load hone tak searchResult already set ho sakta hai,
+    // isliye yaha bhi ek baar pan kar do
+    panToResult(searchResult);
+  }, [searchResult, panToResult]);
 
   const onUnmount = useCallback(() => {
     mapRef.current = null;
   }, []);
 
   useEffect(() => {
-    if (searchResult && searchResult.lat && searchResult.lon && mapRef.current) {
-      mapRef.current.panTo({
-        lat: parseFloat(searchResult.lat),
-        lng: parseFloat(searchResult.lon)
-      });
-      mapRef.current.setZoom(14);
-    }
-  }, [searchResult]);
+    panToResult(searchResult);
+  }, [searchResult, panToResult]);
 
   return (
     <GoogleMap
@@ -73,8 +78,8 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
           lng: parseFloat(item.lon)
         };
 
-        const score30 = item.prediction_30min ?? item.current_score;
-        const score60 = item.prediction_60min ?? item.current_score;
+        const score30 = item.predict_30min ?? item.current_score;
+        const score60 = item.predict_60min ?? item.current_score;
 
         return (
           <React.Fragment key={i}>

@@ -7,8 +7,7 @@ import RouteOptimizer from './RouteOptimizer';
 import EmergencyRoute from './EmergencyRoute';
 import Home from './Home';
 import PeakHourChart from './PeakHourChart';
-import SkeletonCard, { SkeletonMap } from './SkeletonCard';
-import API_BASE from './apiConfig';
+import { SkeletonCard, SkeletonMap } from './SkeletonCard';
 
 function App() {
   const [searchLocation, setSearchLocation] = useState('');
@@ -24,14 +23,13 @@ function App() {
     setSearching(true);
     setAccidentRisk(null);
     try {
-      const res = await axios.post(`${API_BASE}/api/predict`, {
+      const res = await axios.post('http://127.0.0.1:5000/api/predict', {
         location: searchLocation
       });
-      console.log(res.data);
 
       // reuse the lat/lon we already got, no need to geocode again
       setRiskLoading(true);
-      const riskRes = await axios.post(`${API_BASE}/api/accident-risk`, {
+      const riskRes = await axios.post('http://127.0.0.1:5000/api/accident-risk', {
         location: searchLocation,
         lat: res.data.lat,
         lon: res.data.lon,
@@ -39,7 +37,7 @@ function App() {
         weather: res.data.weather
       });
 
-      // accident_risk gets saved inside result now, so it goes into history too
+      // accident_risk ab result ke andar hi save hoga, isliye history me bhi jayega
       const result = { location: searchLocation, ...res.data, accident_risk: riskRes.data };
       setSearchResult(result);
       setSearchHistory(prev => [result, ...prev.slice(0, 9)]);
@@ -239,7 +237,7 @@ function App() {
             </div>
 
             <div className="map-panel">
-              {searching && !searchResult ? (
+              {searching ? (
                 <SkeletonMap />
               ) : (
                 <SmartMap searchResult={searchResult} searchHistory={searchHistory} />

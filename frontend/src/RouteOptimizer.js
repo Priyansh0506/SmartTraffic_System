@@ -3,8 +3,6 @@ import axios from 'axios';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import SkeletonCard, { SkeletonMap } from './SkeletonCard';
-import API_BASE from './apiConfig';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -92,11 +90,10 @@ function RouteOptimizer() {
     setResult(null);
 
     try {
-      const res = await axios.post(`${API_BASE}/api/optimize-route`, {
+      const res = await axios.post('http://127.0.0.1:5000/api/optimize-route', {
         source: sourceUsedIsGPS() ? sourceCoords : source,
         destination,
       });
-      console.log(res.data);
       setResult(res.data);
       setSelectedRouteId(res.data.all_routes[0].route_id);
     } catch (err) {
@@ -158,19 +155,7 @@ function RouteOptimizer() {
 
       {error && <p className="empty-sub">{error}</p>}
 
-      {loading && (
-        <div className="content-grid">
-          <div className="result-panel">
-            <SkeletonCard />
-            <SkeletonCard />
-          </div>
-          <div className="map-panel">
-            <SkeletonMap />
-          </div>
-        </div>
-      )}
-
-      {!loading && result && selectedRoute && (
+      {result && selectedRoute && (
         <div className="content-grid">
           <div className="result-panel">
             <p className="history-label">Top {result.all_routes.length} routes — tap one to preview</p>

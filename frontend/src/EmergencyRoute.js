@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
-import API_BASE from './apiConfig';
 
 // same trick as the route optimizer map - leaflet needs a nudge after
 // mount or it renders with the wrong size half the time
@@ -70,7 +69,7 @@ function EmergencyRoute() {
     const usingGPS = sourceCoords && !sourceEdited;
 
     try {
-      const res = await axios.post(`${API_BASE}/api/emergency-route`, {
+      const res = await axios.post('http://127.0.0.1:5000/api/emergency-route', {
         source: usingGPS ? sourceCoords : source,
         destination: destination,
         vehicle_type: vehicleType
