@@ -8,3 +8,4 @@ tensorflow
 python-dotenv
 ultralytics
 gunicorn
+joblib
