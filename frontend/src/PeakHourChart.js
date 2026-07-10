@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import axios from 'axios';
+import api from './api';
 
 function barColor(score, isCurrent) {
   if (isCurrent) return '#60a5fa';
@@ -38,7 +38,7 @@ function PeakHourChart({ lat, lon, data }) {
     let cancelled = false;
     setLoading(true);
 
-    axios.post('http://127.0.0.1:5000/api/peak-hours', { lat, lon })
+    api.post('/api/peak-hours', { lat, lon })
       .then(res => {
         if (!cancelled) setProfile(res.data);
       })

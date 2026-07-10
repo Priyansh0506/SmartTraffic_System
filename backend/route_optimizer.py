@@ -1,12 +1,22 @@
 import re
 import math
 import requests
+from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from vehicle_count import count_vehicles
 
 NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
 OSRM_URL = "http://router.project-osrm.org/route/v1/driving"
 
 HEADERS = {"User-Agent": "SmartTrafficSystem/1.0"}
+
+# the public OSRM demo server rate-limits / drops requests under load, so
+# retry a couple times with backoff before giving up on it
+_session = requests.Session()
+_retry = Retry(total=2, backoff_factor=0.4, status_forcelist=[429, 500, 502, 503, 504])
+_session.mount("http://", HTTPAdapter(max_retries=_retry))
+_session.mount("https://", HTTPAdapter(max_retries=_retry))
 
 SAMPLE_POINTS_PER_ROUTE = 6
 MAX_ROUTES = 3
@@ -25,7 +35,7 @@ def geocode_location(place_name):
         return float(match.group(1)), float(match.group(3))
 
     params = {"q": place_name, "format": "json", "limit": 1}
-    res = requests.get(NOMINATIM_URL, params=params, headers=HEADERS, timeout=10)
+    res = _session.get(NOMINATIM_URL, params=params, headers=HEADERS, timeout=10)
     results = res.json()
 
     if not results:
@@ -131,11 +141,19 @@ def status_for_score(score):
 def score_route_congestion(coords):
     sample_points = pick_sample_points_with_distance(coords, SAMPLE_POINTS_PER_ROUTE)
 
+    # each point hits TomTom (which itself fans out to 5 nearby points),
+    # so doing 6 points one after another was the main reason a single
+    # route took several seconds - run them together instead
+    with ThreadPoolExecutor(max_workers=len(sample_points) or 1) as pool:
+        vehicle_counts = list(pool.map(
+            lambda point: count_vehicles(lat=point[0][0], lon=point[0][1]),
+            sample_points,
+        ))
+
     segments = []
     scores = []
 
-    for (lat, lon), distance_km in sample_points:
-        vehicles = count_vehicles(lat=lat, lon=lon)
+    for (point, distance_km), vehicles in zip(sample_points, vehicle_counts):
         score = min(10, round(vehicles / 20, 1))
         scores.append(score)
         segments.append({
@@ -163,7 +181,7 @@ def call_osrm(coord_chain, alternatives=True):
     }
 
     try:
-        res = requests.get(url, params=params, timeout=10)
+        res = _session.get(url, params=params, timeout=10)
         data = res.json()
     except requests.RequestException:
         return None, "NETWORK_ERROR"
@@ -228,18 +246,26 @@ def optimize_route(source, destination):
     routes, error = collect_route_candidates(source_coords, dest_coords)
 
     if error:
+        print(f"[route_optimizer] OSRM gave up for {source} -> {destination}: {error}")
         return {"error": error}
 
     if not routes:
+        print(f"[route_optimizer] no candidates at all for {source} -> {destination}")
         return {"error": "NO_ROUTES_FOUND"}
+
+    # scoring one route doesn't depend on any other, so run them all
+    # at once instead of stacking their cost on top of each other
+    def score_candidate(route):
+        coords = decode_polyline(route["geometry"])
+        congestion_score, segments = score_route_congestion(coords)
+        return coords, congestion_score, segments
+
+    with ThreadPoolExecutor(max_workers=len(routes)) as pool:
+        scored = list(pool.map(score_candidate, routes))
 
     ranked_routes = []
 
-    for i, route in enumerate(routes):
-        polyline = route["geometry"]
-        coords = decode_polyline(polyline)
-
-        congestion_score, segments = score_route_congestion(coords)
+    for i, (route, (coords, congestion_score, segments)) in enumerate(zip(routes, scored)):
         distance_km = round(route["distance"] / 1000, 1)
         duration_min = round(route["duration"] / 60)
 

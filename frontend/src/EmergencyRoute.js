@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import api from './api';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { SkeletonCard, SkeletonMap } from './SkeletonCard';
@@ -70,7 +71,7 @@ function EmergencyRoute() {
     const usingGPS = sourceCoords && !sourceEdited;
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/emergency-route', {
+      const res = await api.post('/api/emergency-route', {
         source: usingGPS ? sourceCoords : source,
         destination: destination,
         vehicle_type: vehicleType

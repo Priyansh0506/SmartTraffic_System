@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import axios from 'axios';
+import api from './api';
 import SmartMap from './SmartMap';
 import DemoSection from './DemoSection';
 import './App.css';
@@ -23,13 +23,13 @@ function App() {
     setSearching(true);
     setAccidentRisk(null);
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/predict', {
+      const res = await api.post('/api/predict', {
         location: searchLocation
       });
 
       // reuse the lat/lon we already got, no need to geocode again
       setRiskLoading(true);
-      const riskRes = await axios.post('http://127.0.0.1:5000/api/accident-risk', {
+      const riskRes = await api.post('/api/accident-risk', {
         location: searchLocation,
         lat: res.data.lat,
         lon: res.data.lon,

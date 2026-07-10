@@ -1,11 +1,21 @@
 import requests
 import datetime
 import os
+from concurrent.futures import ThreadPoolExecutor
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from dotenv import load_dotenv
 
 load_dotenv()
 
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
+
+# reused across calls, and retries a couple times if TomTom throws a
+# 429 or a flaky 5xx (happens more than you'd think on the free tier)
+_session = requests.Session()
+_retry = Retry(total=2, backoff_factor=0.3, status_forcelist=[429, 500, 502, 503, 504])
+_session.mount("https://", HTTPAdapter(max_retries=_retry))
+
 # Indian city traffic pattern by hour
 HOURLY_MULTIPLIER = {
     0: 0.3, 1: 0.2, 2: 0.15, 3: 0.15, 4: 0.2, 5: 0.4,
@@ -24,7 +34,7 @@ def get_flow_for_point(lat, lon):
         f"?point={lat},{lon}&key={TOMTOM_API_KEY}&unit=KMPH"
     )
     try:
-        response = requests.get(url, timeout=5)
+        response = _session.get(url, timeout=5)
         if response.status_code != 200:
             # this print is the important part - tells us EXACTLY why it's failing
             # 401/403 -> key invalid or Traffic API not enabled on this key
@@ -57,15 +67,21 @@ def count_vehicles(lat=29.9457, lon=78.1642):
         (0, -0.003),
     ]
 
-    ratios = []
-    for dlat, dlon in offsets:
-        ratio = get_flow_for_point(lat + dlat, lon + dlon)
-        if ratio is not None:
-            ratios.append(ratio)
+    # was doing these one at a time before - fine for a single search, but
+    # route_optimizer calls this per sample point per route, so the
+    # sequential delay was stacking up enough to trip Render's timeout
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        results = pool.map(lambda off: get_flow_for_point(lat + off[0], lon + off[1]), offsets)
+
+    ratios = [r for r in results if r is not None]
 
     if ratios:
-        avg_ratio = sum(ratios) / len(ratios)
-        congestion_factor = 1 - avg_ratio
+        ratios.sort()
+        mid = len(ratios) // 2
+        # median > mean here - only 5 points, so one bad reading used to
+        # skew the whole thing
+        median_ratio = ratios[mid] if len(ratios) % 2 else (ratios[mid - 1] + ratios[mid]) / 2
+        congestion_factor = 1 - median_ratio
 
         # base vehicles scaled by time of day + live congestion
         vehicle_count = int(BASE_VEHICLES * time_multiplier * (0.4 + congestion_factor * 1.6))

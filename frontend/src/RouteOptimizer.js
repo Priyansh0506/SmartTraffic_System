@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
+import api from './api';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -16,11 +17,21 @@ function MapReadyHandler({ bounds }) {
   const map = useMap();
 
   useEffect(() => {
-    const timer = setTimeout(() => {
-      map.invalidateSize();
-      if (bounds) map.fitBounds(bounds, { padding: [40, 40] });
-    }, 200);
-    return () => clearTimeout(timer);
+    let cancelled = false;
+
+    // container size isn't final yet right when this mounts (skeleton
+    // -> real layout swap still settling) - a flat setTimeout(200) used
+    // to fire before that finished on slower renders and fitBounds would
+    // zoom against the wrong size. waiting a couple frames lets it paint first.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        map.invalidateSize();
+        if (bounds) map.fitBounds(bounds, { padding: [40, 40] });
+      });
+    });
+
+    return () => { cancelled = true; };
   }, [map, bounds]);
 
   return null;
@@ -91,7 +102,7 @@ function RouteOptimizer() {
     setResult(null);
 
     try {
-      const res = await axios.post('http://127.0.0.1:5000/api/optimize-route', {
+      const res = await api.post('/api/optimize-route', {
         source: sourceUsedIsGPS() ? sourceCoords : source,
         destination,
       });
@@ -113,9 +124,13 @@ function RouteOptimizer() {
     ? result.all_routes.find((r) => r.route_id === selectedRouteId)
     : null;
 
-  const mapBounds = result
-    ? [result.source_coords, result.destination_coords, ...(selectedRoute?.coordinates || [])]
-    : null;
+  // without this, the array below gets rebuilt on every render (even
+  // unrelated ones), which kept re-firing MapReadyHandler's effect and
+  // was the actual cause of the random zoom glitches
+  const mapBounds = useMemo(() => {
+    if (!result) return null;
+    return [result.source_coords, result.destination_coords, ...(selectedRoute?.coordinates || [])];
+  }, [result, selectedRoute]);
 
   return (
     <div className="route-optimizer">
