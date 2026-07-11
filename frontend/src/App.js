@@ -22,30 +22,48 @@ function App() {
     if (!searchLocation.trim()) return;
     setSearching(true);
     setAccidentRisk(null);
+
+    // Step 1: get the location + traffic data. If THIS fails, the
+    // location genuinely wasn't found - show the alert.
+    let predictData;
     try {
       const res = await api.post('/api/predict', {
         location: searchLocation
       });
-
-      // reuse the lat/lon we already got, no need to geocode again
-      setRiskLoading(true);
-      const riskRes = await api.post('/api/accident-risk', {
-        location: searchLocation,
-        lat: res.data.lat,
-        lon: res.data.lon,
-        vehicle_count: res.data.vehicle_count,
-        weather: res.data.weather
-      });
-
-      // accident_risk ab result ke andar hi save hoga, isliye history me bhi jayega
-      const result = { location: searchLocation, ...res.data, accident_risk: riskRes.data };
-      setSearchResult(result);
-      setSearchHistory(prev => [result, ...prev.slice(0, 9)]);
-      setAccidentRisk(riskRes.data);
+      predictData = res.data;
     } catch (err) {
       alert('Location not found.');
-    } finally {
       setSearching(false);
+      return;
+    }
+
+    // location was found successfully - show it right away, don't let
+    // a slow/failed accident-risk call block or hide this result
+    const result = { location: searchLocation, ...predictData, accident_risk: null };
+    setSearchResult(result);
+    setSearchHistory(prev => [result, ...prev.slice(0, 9)]);
+    setSearching(false);
+
+    // Step 2: accident risk is a separate, independent call. If it
+    // fails (cold start timeout etc.) we just leave the risk section
+    // empty instead of throwing away the whole result with a wrong alert.
+    setRiskLoading(true);
+    try {
+      const riskRes = await api.post('/api/accident-risk', {
+        location: searchLocation,
+        lat: predictData.lat,
+        lon: predictData.lon,
+        vehicle_count: predictData.vehicle_count,
+        weather: predictData.weather
+      });
+
+      const finalResult = { ...result, accident_risk: riskRes.data };
+      setSearchResult(finalResult);
+      setSearchHistory(prev => [finalResult, ...prev.slice(1)]);
+      setAccidentRisk(riskRes.data);
+    } catch (err) {
+      setAccidentRisk(null);
+    } finally {
       setRiskLoading(false);
     }
   };
@@ -187,6 +205,9 @@ function App() {
                     <p className="pred-title">Accident Risk</p>
                     {riskLoading && (
                       <p style={{ fontSize: 12, color: '#6b7280' }}>Checking...</p>
+                    )}
+                    {!riskLoading && !accidentRisk && (
+                      <p style={{ fontSize: 12, color: '#6b7280' }}>Risk data unavailable right now.</p>
                     )}
                     {accidentRisk && !riskLoading && (
                       <div style={{
