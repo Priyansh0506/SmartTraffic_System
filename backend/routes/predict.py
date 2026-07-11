@@ -59,6 +59,32 @@ def pick_best_match(results, query):
     return ranked[0]
 
 
+def _tomtom_search(location, use_bias=True, use_idxset=True):
+    """Runs one TomTom fuzzy search call. Returns the 'results' list (possibly empty)."""
+    params = f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=10"
+    if use_idxset:
+        params += "&idxSet=Geo,PAD"
+    if use_bias:
+        params += "&lat=29.9&lon=78.0&radius=200000"
+
+    url = f"https://api.tomtom.com/search/2/search/{location}.json{params}"
+    response = requests.get(url, timeout=5)
+    data = response.json()
+    results = data.get('results', [])
+
+    print(f"[debug] url={url} status={response.status_code} result_count={len(results)}")
+    for r in results:
+        print(
+            f"[debug]   type={r.get('type')} entityType={r.get('entityType')} "
+            f"municipality={r.get('address', {}).get('municipality')} "
+            f"name={r.get('poi', {}).get('name')} "
+            f"addr={r.get('address', {}).get('freeformAddress')} "
+            f"score={r.get('score')}"
+        )
+
+    return results
+
+
 @predict_bp.route('/api/predict', methods=['POST'])
 def predict():
     data = request.get_json()
@@ -67,27 +93,16 @@ def predict():
     lon = data.get('lon', None)
 
     if not lat or not lon:
-        search_url = (
-            f"https://api.tomtom.com/search/2/search/{location}.json"
-            f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=5&idxSet=Geo,PAD"
-        )
-        search_response = requests.get(search_url, timeout=5)
-        search_data = search_response.json()
+        # attempt 1: biased + restricted to Geo/PAD (most accurate when it works)
+        results = _tomtom_search(location, use_bias=True, use_idxset=True)
 
-        results = search_data.get('results', [])
-        for r in results:
-         print(f"[debug] type={r.get('type')} entityType={r.get('entityType')} municipality={r.get('address',{}).get('municipality')} name={r.get('poi',{}).get('name')} addr={r.get('address',{}).get('freeformAddress')} score={r.get('score')}")
-
-        # idxSet=Geo,PAD sometimes misses very small towns - if nothing came
-        # back, retry once with the full index (POIs included) so we still
-        # find *something* rather than a flat 404
+        # attempt 2: drop the bias/radius in case that's over-restricting
         if not results:
-            fallback_url = (
-                f"https://api.tomtom.com/search/2/search/{location}.json"
-                f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"
-            )
-            fallback_response = requests.get(fallback_url, timeout=5)
-            results = fallback_response.json().get('results', [])
+            results = _tomtom_search(location, use_bias=False, use_idxset=True)
+
+        # attempt 3: drop idxSet too, full index (POIs included) as last resort
+        if not results:
+            results = _tomtom_search(location, use_bias=False, use_idxset=False)
 
         if not results:
             return jsonify({"error": "Location not found"}), 404
