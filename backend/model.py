@@ -1,9 +1,8 @@
 import numpy as np
 import random
-from tensorflow import keras
-from tensorflow.keras import layers
 import joblib
 import os
+import gc
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 _WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "ml_model", "traffic_model.weights.h5")
@@ -21,6 +20,12 @@ WEATHER_TO_NUMBER = {
 
 
 def _build_model_architecture():
+    # tensorflow is imported here (not at module top) so the server
+    # doesn't pull the whole TF runtime into memory just from starting
+    # up - it only loads the first time a prediction actually needs it
+    from tensorflow import keras
+    from tensorflow.keras import layers
+
     model = keras.Sequential([
         layers.Input(shape=(3,)),
         layers.Dense(16, activation="relu"),
@@ -42,6 +47,17 @@ def load_model():
             print(f"Model could not be loaded, falling back to rule-based formula. Reason: {e}")
             _model = None
     return _model
+
+
+def unload_model():
+    """
+    Frees the traffic congestion model from memory. Safe to call any
+    time - load_model() will just rebuild it on the next prediction.
+    """
+    global _model, _scaler
+    _model = None
+    _scaler = None
+    gc.collect()
 
 
 def predict_congestion(vehicle_count, weather, hour):
@@ -182,6 +198,10 @@ _accident_scaler = None
 
 
 def _build_accident_model_architecture():
+    # same lazy-import reasoning as the traffic model above
+    from tensorflow import keras
+    from tensorflow.keras import layers
+
     model = keras.Sequential([
         layers.Input(shape=(3,)),
         layers.Dense(16, activation="relu"),
@@ -203,6 +223,14 @@ def load_accident_model():
             print(f"Accident model could not be loaded, falling back to rule-based formula. Reason: {e}")
             _accident_model = None
     return _accident_model
+
+
+def unload_accident_model():
+    """Frees the accident risk model from memory. Rebuilds on next use."""
+    global _accident_model, _accident_scaler
+    _accident_model = None
+    _accident_scaler = None
+    gc.collect()
 
 
 weather_risk_map = {

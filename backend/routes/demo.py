@@ -1,11 +1,11 @@
 from flask import Blueprint, jsonify, request
 from model import predict_congestion, predict_short_term, get_peak_hour_profile
 from route_optimizer import geocode_location, collect_route_candidates, decode_polyline, status_for_score
-from ultralytics import YOLO
 import cv2
 import numpy as np
 import tempfile
 import os
+import gc
 import datetime
 
 demo_bp = Blueprint('demo', __name__)
@@ -18,17 +18,32 @@ _vehicle_model = None
 
 def _get_vehicle_model():
     """
-    Loaded once and reused across requests - loading yolov8n fresh on
-    every upload would add several seconds of dead time to every
-    analysis for no reason.
+    Loaded on first use and reused across requests while it's in memory.
+    ultralytics/torch are imported inside this function (not at module
+    top) so the server doesn't pull the whole torch runtime into memory
+    until a video actually needs to be analyzed.
     """
     global _vehicle_model
     if _vehicle_model is None:
+        from ultralytics import YOLO
         # yolov8n is the smallest/fastest YOLOv8 variant - accurate
         # enough for counting cars/bikes/buses/trucks and still fast
         # on CPU, which matters since this runs per uploaded video
         _vehicle_model = YOLO('yolov8n.pt')
     return _vehicle_model
+
+
+def _unload_vehicle_model():
+    """
+    Frees the YOLO model from memory after a video's been analyzed.
+    _get_vehicle_model() will just reload it the next time someone
+    uploads a video - costs a few extra seconds on that next request,
+    but keeps YOLO and the TensorFlow models from ever sitting in
+    memory at the same time.
+    """
+    global _vehicle_model
+    _vehicle_model = None
+    gc.collect()
 
 
 def analyze_video_frames(video_path):
@@ -59,26 +74,30 @@ def analyze_video_frames(video_path):
     blur_vals = []
 
     frame_idx = 0
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-        if frame_idx % sample_interval == 0:
-            results = model.predict(frame, verbose=False, conf=0.35)[0]
-            count = sum(
-                1 for c in results.boxes.cls.tolist()
-                if int(c) in _VEHICLE_CLASS_IDS
-            )
-            vehicle_counts.append(count)
+            if frame_idx % sample_interval == 0:
+                results = model.predict(frame, verbose=False, conf=0.35)[0]
+                count = sum(
+                    1 for c in results.boxes.cls.tolist()
+                    if int(c) in _VEHICLE_CLASS_IDS
+                )
+                vehicle_counts.append(count)
 
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            brightness_vals.append(np.mean(gray))
-            blur_vals.append(cv2.Laplacian(gray, cv2.CV_64F).var())
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                brightness_vals.append(np.mean(gray))
+                blur_vals.append(cv2.Laplacian(gray, cv2.CV_64F).var())
 
-        frame_idx += 1
-
-    cap.release()
+            frame_idx += 1
+    finally:
+        cap.release()
+        # video's fully processed either way - free the model now
+        # rather than leaving it sitting in memory until the next call
+        _unload_vehicle_model()
 
     if not vehicle_counts:
         return None, None
