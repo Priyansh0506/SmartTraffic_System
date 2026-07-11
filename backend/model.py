@@ -4,6 +4,7 @@ from tensorflow import keras
 from tensorflow.keras import layers
 import joblib
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 
 _WEIGHTS_PATH = os.path.join(os.path.dirname(__file__), "ml_model", "traffic_model.weights.h5")
 _SCALER_PATH = os.path.join(os.path.dirname(__file__), "ml_model", "scaler.save")

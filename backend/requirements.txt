@@ -2,7 +2,7 @@ flask
 flask-cors
 mysql-connector-python
 requests
-opencv-python
+opencv-python-headless
 numpy
 tensorflow-cpu
 python-dotenv
