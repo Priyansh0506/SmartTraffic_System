@@ -39,12 +39,18 @@ def pick_best_match(results, query):
         combined = f"{name} {address}"
         return sum(1 for w in query_words if w in combined)
 
-    # only consider results that actually contain a word from the query
-    # somewhere in their name/address - this stops an unrelated but
-    # "important" place (e.g. Baksar/Buxar) from beating the real match
-    # just because it outranks on entity type
-    filtered = [r for r in results if word_hits_for(r) > 0]
-    candidates = filtered if filtered else results
+    def all_words_match(r):
+        name = (r.get('poi', {}).get('name') or '').lower()
+        address = (r.get('address', {}).get('freeformAddress') or '').lower()
+        combined = f"{name} {address}"
+        return all(w in combined for w in query_words)
+
+    # Tier 1: results where EVERY query word appears somewhere
+    full_match = [r for r in results if all_words_match(r)]
+    # Tier 2: results with at least one word match
+    partial_match = [r for r in results if word_hits_for(r) > 0]
+
+    candidates = full_match if full_match else (partial_match if partial_match else results)
 
     def overlap_score(r):
         name = (r.get('poi', {}).get('name') or '').lower()
@@ -52,16 +58,11 @@ def pick_best_match(results, query):
         municipality = (r.get('address', {}).get('municipality') or '').lower()
         combined = f"{name} {address}"
 
-        # strongest signal: the municipality field itself matches the query
         municipality_match = 1 if municipality and all(
             w in municipality for w in query_words
         ) else 0
 
         word_hits = word_hits_for(r)
-
-        # prefer actual towns/colonies/streets over POIs/dhabas that just
-        # happen to mention the place name in their address - but only
-        # as a tie-breaker AFTER actual word match, not before
         type_rank = TYPE_RANK.get(r.get('type'), 0)
         geo_rank = GEO_PRIORITY.get(r.get('entityType'), 0)
 
