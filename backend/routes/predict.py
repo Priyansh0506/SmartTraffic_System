@@ -75,6 +75,8 @@ def predict():
         search_data = search_response.json()
 
         results = search_data.get('results', [])
+        for r in results:
+         print(f"[debug] type={r.get('type')} entityType={r.get('entityType')} municipality={r.get('address',{}).get('municipality')} name={r.get('poi',{}).get('name')} addr={r.get('address',{}).get('freeformAddress')} score={r.get('score')}")
 
         # idxSet=Geo,PAD sometimes misses very small towns - if nothing came
         # back, retry once with the full index (POIs included) so we still
