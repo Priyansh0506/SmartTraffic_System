@@ -2,9 +2,12 @@ from flask import Blueprint, jsonify, request
 from model import predict_congestion, predict_accident_risk
 from weather import get_weather
 from vehicle_count import count_vehicles
-from routes.predict import pick_best_match, TOMTOM_API_KEY
+from routes.predict import (
+    pick_best_match,
+    _tomtom_search,
+    _nominatim_search,
+)
 import datetime
-import requests
 
 accident_bp = Blueprint('accident', __name__)
 
@@ -16,22 +19,28 @@ def accident_risk():
     lat = data.get('lat')
     lon = data.get('lon')
     # if the frontend already fetched these via /api/predict, reuse them
-    # instead of hitting TomTom again - cuts API usage roughly in half
+    # instead of hitting the geocoders again - cuts API usage roughly in half
     vehicle_count = data.get('vehicle_count')
     weather = data.get('weather')
 
     if not lat or not lon:
-        url = f"https://api.tomtom.com/search/2/search/{location}.json?key={TOMTOM_API_KEY}&countrySet=IN&limit=5"
-        res = requests.get(url, timeout=5)
-        res_data = res.json()
+        tomtom_candidates = _tomtom_search(location, use_bias=True, use_idxset=True)
+        if not tomtom_candidates:
+            tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=True)
+        if not tomtom_candidates:
+            tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=False)
 
-        results = res_data.get('results', [])
-        if not results:
+        nominatim_candidates = _nominatim_search(location)
+
+        all_candidates = tomtom_candidates + nominatim_candidates
+        all_candidates = [c for c in all_candidates if c.get('lat') and c.get('lon')]
+
+        if not all_candidates:
             return jsonify({"error": "Location not found"}), 404
 
-        best = pick_best_match(results, location)
-        lat = best['position']['lat']
-        lon = best['position']['lon']
+        best = pick_best_match(all_candidates, location)
+        lat = best['lat']
+        lon = best['lon']
 
     if weather is None:
         weather, wind_speed = get_weather(float(lat), float(lon))

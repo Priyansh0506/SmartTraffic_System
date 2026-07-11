@@ -13,7 +13,6 @@ predict_bp = Blueprint('predict', __name__)
 
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 
-
 GEO_PRIORITY = {
     "Municipality": 4,
     "MunicipalitySubdivision": 3,
@@ -21,8 +20,6 @@ GEO_PRIORITY = {
     "CountrySecondarySubdivision": 1,
 }
 
-# rank by result "type": actual places first, then street/colony
-# addresses, POIs (restaurants, dhabas etc.) come last
 TYPE_RANK = {
     "Geography": 2,
     "Point Address": 1,
@@ -30,50 +27,59 @@ TYPE_RANK = {
 }
 
 
-def pick_best_match(results, query):
-    query_words = [w for w in query.lower().split() if len(w) > 2]
+def _normalize_tomtom(r):
+    """Converts a raw TomTom result into our common candidate format."""
+    return {
+        "source": "tomtom",
+        "lat": r.get("position", {}).get("lat"),
+        "lon": r.get("position", {}).get("lon"),
+        "name": (r.get("poi", {}).get("name") or ""),
+        "address": (r.get("address", {}).get("freeformAddress") or ""),
+        "municipality": (r.get("address", {}).get("municipality") or ""),
+        "type_rank": TYPE_RANK.get(r.get("type"), 0),
+        "geo_rank": GEO_PRIORITY.get(r.get("entityType"), 0),
+        "score": r.get("score", 0),
+    }
 
-    def word_hits_for(r):
-        name = (r.get('poi', {}).get('name') or '').lower()
-        address = (r.get('address', {}).get('freeformAddress') or '').lower()
-        combined = f"{name} {address}"
-        return sum(1 for w in query_words if w in combined)
 
-    def all_words_match(r):
-        name = (r.get('poi', {}).get('name') or '').lower()
-        address = (r.get('address', {}).get('freeformAddress') or '').lower()
-        combined = f"{name} {address}"
-        return all(w in combined for w in query_words)
+def _normalize_nominatim(r):
+    """Converts a raw Nominatim (OpenStreetMap) result into our common candidate format."""
+    addr = r.get("address", {})
+    municipality = (
+        addr.get("town") or addr.get("city") or addr.get("village")
+        or addr.get("municipality") or addr.get("county") or ""
+    )
+    place_type = r.get("type", "")
+    place_class = r.get("class", "")
 
-    # Tier 1: results where EVERY query word appears somewhere
-    full_match = [r for r in results if all_words_match(r)]
-    # Tier 2: results with at least one word match
-    partial_match = [r for r in results if word_hits_for(r) > 0]
+    # OSM's "importance" plays the same role as TomTom's "score"
+    importance = float(r.get("importance", 0) or 0)
 
-    candidates = full_match if full_match else (partial_match if partial_match else results)
+    # give a geo_rank bonus similar to TomTom's Municipality bonus when
+    # OSM itself classifies this as an actual place (not a road/POI)
+    geo_rank = 0
+    if place_class == "place" and place_type in ("city", "town", "village", "hamlet"):
+        geo_rank = 4
+    elif place_class == "boundary":
+        geo_rank = 3
 
-    def overlap_score(r):
-        name = (r.get('poi', {}).get('name') or '').lower()
-        address = (r.get('address', {}).get('freeformAddress') or '').lower()
-        municipality = (r.get('address', {}).get('municipality') or '').lower()
-        combined = f"{name} {address}"
+    type_rank = 0 if place_class in ("highway",) else 1
 
-        municipality_match = 1 if municipality and all(
-            w in municipality for w in query_words
-        ) else 0
-
-        word_hits = word_hits_for(r)
-        type_rank = TYPE_RANK.get(r.get('type'), 0)
-        geo_rank = GEO_PRIORITY.get(r.get('entityType'), 0)
-
-        return (municipality_match, word_hits, type_rank, geo_rank, r.get('score', 0))
-
-    ranked = sorted(candidates, key=overlap_score, reverse=True)
-    return ranked[0]
+    return {
+        "source": "nominatim",
+        "lat": float(r.get("lat")) if r.get("lat") else None,
+        "lon": float(r.get("lon")) if r.get("lon") else None,
+        "name": r.get("name", ""),
+        "address": r.get("display_name", ""),
+        "municipality": municipality,
+        "type_rank": type_rank,
+        "geo_rank": geo_rank,
+        # scale importance (0-1 range) up so it's comparable to TomTom's score (0-10ish range)
+        "score": importance * 10,
+    }
 
 
 def _tomtom_search(location, use_bias=True, use_idxset=True):
-    """Runs one TomTom fuzzy search call. Returns the 'results' list (possibly empty)."""
     params = f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=10"
     if use_idxset:
         params += "&idxSet=Geo,PAD"
@@ -81,21 +87,79 @@ def _tomtom_search(location, use_bias=True, use_idxset=True):
         params += "&lat=29.9&lon=78.0&radius=200000"
 
     url = f"https://api.tomtom.com/search/2/search/{location}.json{params}"
-    response = requests.get(url, timeout=5)
-    data = response.json()
-    results = data.get('results', [])
+    try:
+        response = requests.get(url, timeout=5)
+        data = response.json()
+        results = data.get('results', [])
+    except Exception as e:
+        print(f"[debug] TomTom search failed: {e}")
+        results = []
 
-    print(f"[debug] url={url} status={response.status_code} result_count={len(results)}")
-    for r in results:
-        print(
-            f"[debug]   type={r.get('type')} entityType={r.get('entityType')} "
-            f"municipality={r.get('address', {}).get('municipality')} "
-            f"name={r.get('poi', {}).get('name')} "
-            f"addr={r.get('address', {}).get('freeformAddress')} "
-            f"score={r.get('score')}"
-        )
+    print(f"[debug] tomtom url={url} result_count={len(results)}")
+    return [_normalize_tomtom(r) for r in results]
 
-    return results
+
+def _nominatim_search(location):
+    """
+    Free OSM-based geocoder. Its India coverage for small towns/villages
+    is often better than TomTom's, so we merge both sources and let
+    pick_best_match choose the best candidate across all of them.
+    """
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": location,
+        "format": "jsonv2",
+        "addressdetails": 1,
+        "countrycodes": "in",
+        "limit": 10,
+    }
+    headers = {
+        # Nominatim's usage policy requires a real identifying User-Agent
+        "User-Agent": "SmartTrafficSystem/1.0 (contact: your-email@example.com)"
+    }
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=5)
+        results = response.json() if response.status_code == 200 else []
+    except Exception as e:
+        print(f"[debug] Nominatim search failed: {e}")
+        results = []
+
+    print(f"[debug] nominatim result_count={len(results)}")
+    return [_normalize_nominatim(r) for r in results]
+
+
+def pick_best_match(candidates, query):
+    query_words = [w for w in query.lower().split() if len(w) > 2]
+
+    def combined_text(c):
+        return f"{c['name']} {c['address']}".lower()
+
+    def word_hits_for(c):
+        text = combined_text(c)
+        return sum(1 for w in query_words if w in text)
+
+    def all_words_match(c):
+        text = combined_text(c)
+        return all(w in text for w in query_words)
+
+    # Tier 1: candidates where EVERY query word appears somewhere
+    full_match = [c for c in candidates if all_words_match(c)]
+    # Tier 2: candidates with at least one word match
+    partial_match = [c for c in candidates if word_hits_for(c) > 0]
+
+    pool = full_match if full_match else (partial_match if partial_match else candidates)
+
+    def overlap_score(c):
+        municipality = (c.get('municipality') or '').lower()
+        municipality_match = 1 if municipality and all(
+            w in municipality for w in query_words
+        ) else 0
+
+        word_hits = word_hits_for(c)
+        return (municipality_match, word_hits, c['type_rank'], c['geo_rank'], c['score'])
+
+    ranked = sorted(pool, key=overlap_score, reverse=True)
+    return ranked[0]
 
 
 @predict_bp.route('/api/predict', methods=['POST'])
@@ -106,25 +170,27 @@ def predict():
     lon = data.get('lon', None)
 
     if not lat or not lon:
-        # attempt 1: biased + restricted to Geo/PAD (most accurate when it works)
-        results = _tomtom_search(location, use_bias=True, use_idxset=True)
+        # query both geocoders and merge their results into one candidate pool
+        tomtom_candidates = _tomtom_search(location, use_bias=True, use_idxset=True)
+        if not tomtom_candidates:
+            tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=True)
+        if not tomtom_candidates:
+            tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=False)
 
-        # attempt 2: drop the bias/radius in case that's over-restricting
-        if not results:
-            results = _tomtom_search(location, use_bias=False, use_idxset=True)
+        nominatim_candidates = _nominatim_search(location)
 
-        # attempt 3: drop idxSet too, full index (POIs included) as last resort
-        if not results:
-            results = _tomtom_search(location, use_bias=False, use_idxset=False)
+        all_candidates = tomtom_candidates + nominatim_candidates
+        # drop anything without valid coordinates
+        all_candidates = [c for c in all_candidates if c.get('lat') and c.get('lon')]
 
-        if not results:
+        if not all_candidates:
             return jsonify({"error": "Location not found"}), 404
 
-        best = pick_best_match(results, location)
-        print(f"[predict] query='{location}' picked='{best.get('poi', {}).get('name') or best.get('address', {}).get('freeformAddress')}'")
+        best = pick_best_match(all_candidates, location)
+        print(f"[predict] query='{location}' picked source={best['source']} -> '{best['name'] or best['address']}'")
 
-        lat = best['position']['lat']
-        lon = best['position']['lon']
+        lat = best['lat']
+        lon = best['lon']
 
     weather, wind_speed = get_weather(float(lat), float(lon))
 
