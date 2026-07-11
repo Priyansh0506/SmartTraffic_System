@@ -21,28 +21,39 @@ GEO_PRIORITY = {
     "CountrySecondarySubdivision": 1,
 }
 
+# rank by result "type": actual places first, then street/colony
+# addresses, POIs (restaurants, dhabas etc.) come last
+TYPE_RANK = {
+    "Geography": 2,
+    "Point Address": 1,
+    "Street": 1,
+}
+
 
 def pick_best_match(results, query):
     query_words = [w for w in query.lower().split() if len(w) > 2]
 
-    # rank by result "type": actual places first, then street/colony
-    # addresses, POIs (restaurants, dhabas etc.) come last
-    TYPE_RANK = {
-        "Geography": 2,
-        "Point Address": 1,
-        "Street": 1,
-    }
-
     def overlap_score(r):
         name = (r.get('poi', {}).get('name') or '').lower()
         address = (r.get('address', {}).get('freeformAddress') or '').lower()
+        municipality = (r.get('address', {}).get('municipality') or '').lower()
         combined = f"{name} {address}"
+
+        # strongest signal: the municipality field itself matches the query
+        # (fixes cases like "roorkee" picking a random road/dhaba whose
+        # address just happens to mention Roorkee elsewhere)
+        municipality_match = 1 if municipality and all(
+            w in municipality for w in query_words
+        ) else 0
+
         word_hits = sum(1 for w in query_words if w in combined)
+
         # prefer actual towns/colonies/streets over POIs/dhabas that just
         # happen to mention the place name in their address
         type_rank = TYPE_RANK.get(r.get('type'), 0)
         geo_rank = GEO_PRIORITY.get(r.get('entityType'), 0)
-        return (type_rank, geo_rank, word_hits, r.get('score', 0))
+
+        return (municipality_match, type_rank, geo_rank, word_hits, r.get('score', 0))
 
     ranked = sorted(results, key=overlap_score, reverse=True)
     return ranked[0]
