@@ -112,10 +112,6 @@ function DemoSection() {
     handleFile(e.dataTransfer.files[0]);
   };
 
-  const analyze = async () => {
-    // analyze() removed — Demo now uses simulated pipeline only
-  };
-
   const v = result ? result.video_analysis : null;
 
   async function runRoute() {
