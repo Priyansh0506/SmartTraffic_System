@@ -4,7 +4,10 @@ import api from './api';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import LocationAutocomplete from './LocationAutocomplete';
 import { SkeletonCard, SkeletonMap } from './SkeletonCard';
+
+const ROUTE_STATE_KEY = 'smarttraffic_route_optimizer_state';
 
 delete L.Icon.Default.prototype._getIconUrl;
 L.Icon.Default.mergeOptions({
@@ -31,7 +34,9 @@ function MapReadyHandler({ bounds }) {
       });
     });
 
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [map, bounds]);
 
   return null;
@@ -41,16 +46,64 @@ function RouteOptimizer() {
   const [source, setSource] = useState('');
   const [sourceCoords, setSourceCoords] = useState(null); // raw GPS coords, kept separately from the display text
   const [destination, setDestination] = useState('');
+  // agar destination dropdown se select hui hai to uske lat/lon "lat,lon"
+  // string ke form mein yahan store hote hain, taaki backend ko dobara
+  // geocoding guess na karni pade aur "location not found" error na aaye
+  const [destCoords, setDestCoords] = useState(null);
   const [result, setResult] = useState(null);
   const [selectedRouteId, setSelectedRouteId] = useState(0);
   const [loading, setLoading] = useState(false);
   const [locating, setLocating] = useState(true);
   const [error, setError] = useState('');
+  const [sourceWasEdited, setSourceWasEdited] = useState(false);
 
   useEffect(() => {
-    detectCurrentLocation();
+    let loaded = false;
+    try {
+      const json = window.localStorage.getItem(ROUTE_STATE_KEY);
+      if (json) {
+        const saved = JSON.parse(json);
+        if (saved?.source) setSource(saved.source);
+        if (saved?.sourceCoords) setSourceCoords(saved.sourceCoords);
+        if (saved?.destination) setDestination(saved.destination);
+        if (saved?.destCoords) setDestCoords(saved.destCoords);
+        if (saved?.result) setResult(saved.result);
+        if (saved?.selectedRouteId) setSelectedRouteId(saved.selectedRouteId);
+        if (saved?.sourceWasEdited !== undefined) setSourceWasEdited(saved.sourceWasEdited);
+        if (saved?.error) setError(saved.error);
+        loaded = true;
+      }
+    } catch (e) {
+      // ignore invalid storage state
+    }
+
+    if (!loaded) {
+      detectCurrentLocation();
+    } else {
+      setLocating(false);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        ROUTE_STATE_KEY,
+        JSON.stringify({
+          source,
+          sourceCoords,
+          destination,
+          destCoords,
+          result,
+          selectedRouteId,
+          sourceWasEdited,
+          error,
+        })
+      );
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [source, sourceCoords, destination, destCoords, result, selectedRouteId, sourceWasEdited, error]);
 
   const detectCurrentLocation = () => {
     if (!navigator.geolocation) {
@@ -83,9 +136,9 @@ function RouteOptimizer() {
   };
 
   const getStatus = (score) => {
-    if (score <= 3) return { label: 'Clear', cls: 'status-clear', scoreCls: 'score-clear' };
-    if (score <= 6) return { label: 'Moderate', cls: 'status-moderate', scoreCls: 'score-moderate' };
-    return { label: 'Heavy', cls: 'status-heavy', scoreCls: 'score-heavy' };
+    if (score <= 3) return { label: 'Clear traffic', cls: 'status-clear', scoreCls: 'score-clear' };
+    if (score <= 6) return { label: 'Moderate traffic', cls: 'status-moderate', scoreCls: 'score-moderate' };
+    return { label: 'Heavy traffic', cls: 'status-heavy', scoreCls: 'score-heavy' };
   };
 
   const getRouteColor = (score) => {
@@ -104,7 +157,7 @@ function RouteOptimizer() {
     try {
       const res = await api.post('/api/optimize-route', {
         source: sourceUsedIsGPS() ? sourceCoords : source,
-        destination,
+        destination: destCoords || destination,
       });
       setResult(res.data);
       setSelectedRouteId(res.data.all_routes[0].route_id);
@@ -115,14 +168,9 @@ function RouteOptimizer() {
     }
   };
 
-  // tracks whether the user edited the "From" box themselves after GPS
-  // filled it in - if they typed something new, we respect their text
-  const [sourceWasEdited, setSourceWasEdited] = useState(false);
   const sourceUsedIsGPS = () => sourceCoords && !sourceWasEdited;
 
-  const selectedRoute = result
-    ? result.all_routes.find((r) => r.route_id === selectedRouteId)
-    : null;
+  const selectedRoute = result ? result.all_routes.find((r) => r.route_id === selectedRouteId) : null;
 
   // without this, the array below gets rebuilt on every render (even
   // unrelated ones), which kept re-firing MapReadyHandler's effect and
@@ -135,15 +183,19 @@ function RouteOptimizer() {
   return (
     <div className="route-optimizer">
       <div className="search-row">
-        <input
+        <LocationAutocomplete
           className="search-input"
-          type="text"
           placeholder={locating ? 'Detecting your location...' : 'From...'}
           value={source}
-          onChange={(e) => {
-            setSource(e.target.value);
+          onChangeText={(text) => {
+            setSource(text);
             setSourceWasEdited(true);
           }}
+          onSelectSuggestion={(s) => {
+            setSourceCoords(`${s.lat},${s.lon}`);
+            setSourceWasEdited(false);
+          }}
+          onEnter={findBestRoute}
         />
         <button
           className="search-btn"
@@ -156,13 +208,16 @@ function RouteOptimizer() {
         >
           {locating ? '...' : '📍'}
         </button>
-        <input
+        <LocationAutocomplete
           className="search-input"
-          type="text"
           placeholder="To..."
           value={destination}
-          onChange={(e) => setDestination(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && findBestRoute()}
+          onChangeText={(text) => {
+            setDestination(text);
+            setDestCoords(null); // free type kiya, purana selection clear
+          }}
+          onSelectSuggestion={(s) => setDestCoords(`${s.lat},${s.lon}`)}
+          onEnter={findBestRoute}
         />
         <button className="search-btn" onClick={findBestRoute} disabled={loading}>
           {loading ? 'Finding...' : 'Find Best Route'}

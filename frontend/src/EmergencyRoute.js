@@ -3,7 +3,10 @@ import axios from 'axios';
 import api from './api';
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import LocationAutocomplete from './LocationAutocomplete';
 import { SkeletonCard, SkeletonMap } from './SkeletonCard';
+
+const EMERGENCY_STATE_KEY = 'smarttraffic_emergency_route_state';
 
 // same trick as the route optimizer map - leaflet needs a nudge after
 // mount or it renders with the wrong size half the time
@@ -27,14 +30,53 @@ function EmergencyRoute() {
   const [sourceCoords, setSourceCoords] = useState(null);
   const [sourceEdited, setSourceEdited] = useState(false);
   const [destination, setDestination] = useState('');
+  // destination dropdown se select ki gayi "lat,lon" string yahan store
+  // hoti hai - iski wajah se backend ko destination naam se dobara
+  // geocode guess nahi karna padta
+  const [destCoords, setDestCoords] = useState(null);
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [locating, setLocating] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    getLocation();
+    try {
+      const json = window.localStorage.getItem(EMERGENCY_STATE_KEY);
+      if (json) {
+        const saved = JSON.parse(json);
+        if (saved?.vehicleType) setVehicleType(saved.vehicleType);
+        if (saved?.source) setSource(saved.source);
+        if (saved?.sourceCoords) setSourceCoords(saved.sourceCoords);
+        if (saved?.sourceEdited !== undefined) setSourceEdited(saved.sourceEdited);
+        if (saved?.destination) setDestination(saved.destination);
+        if (saved?.destCoords) setDestCoords(saved.destCoords);
+        if (saved?.result) setResult(saved.result);
+        if (saved?.error) setError(saved.error);
+      }
+    } catch (e) {
+      // ignore invalid storage state
+    }
   }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        EMERGENCY_STATE_KEY,
+        JSON.stringify({
+          vehicleType,
+          source,
+          sourceCoords,
+          sourceEdited,
+          destination,
+          destCoords,
+          result,
+          error,
+        })
+      );
+    } catch (e) {
+      // ignore storage write errors
+    }
+  }, [vehicleType, source, sourceCoords, sourceEdited, destination, destCoords, result, error]);
 
   function getLocation() {
     if (!navigator.geolocation) {
@@ -43,22 +85,25 @@ function EmergencyRoute() {
     }
 
     setLocating(true);
-    navigator.geolocation.getCurrentPosition(async (pos) => {
-      const lat = pos.coords.latitude;
-      const lon = pos.coords.longitude;
-      setSourceCoords(lat + ',' + lon);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lon = pos.coords.longitude;
+        setSourceCoords(lat + ',' + lon);
 
-      try {
-        const res = await axios.get('https://nominatim.openstreetmap.org/reverse', {
-          params: { lat, lon, format: 'json' }
-        });
-        const place = res.data?.display_name?.split(',').slice(0, 2).join(',');
-        setSource(place || 'Current location');
-      } catch (e) {
-        setSource('Current location');
-      }
-      setLocating(false);
-    }, () => setLocating(false));
+        try {
+          const res = await axios.get('https://nominatim.openstreetmap.org/reverse', {
+            params: { lat, lon, format: 'json' },
+          });
+          const place = res.data?.display_name?.split(',').slice(0, 2).join(',');
+          setSource(place || 'Current location');
+        } catch (e) {
+          setSource('Current location');
+        }
+        setLocating(false);
+      },
+      () => setLocating(false)
+    );
   }
 
   async function findRoute() {
@@ -73,8 +118,8 @@ function EmergencyRoute() {
     try {
       const res = await api.post('/api/emergency-route', {
         source: usingGPS ? sourceCoords : source,
-        destination: destination,
-        vehicle_type: vehicleType
+        destination: destCoords || destination,
+        vehicle_type: vehicleType,
       });
       setResult(res.data);
     } catch (e) {
@@ -103,15 +148,19 @@ function EmergencyRoute() {
       </div>
 
       <div className="search-row">
-        <input
+        <LocationAutocomplete
           className="search-input"
-          type="text"
           placeholder={locating ? 'Detecting your location...' : 'From...'}
           value={source}
-          onChange={(e) => {
-            setSource(e.target.value);
+          onChangeText={(text) => {
+            setSource(text);
             setSourceEdited(true);
           }}
+          onSelectSuggestion={(s) => {
+            setSourceCoords(`${s.lat},${s.lon}`);
+            setSourceEdited(false);
+          }}
+          onEnter={findRoute}
         />
         <button
           className="search-btn"
@@ -123,13 +172,16 @@ function EmergencyRoute() {
         >
           {locating ? '...' : '📍'}
         </button>
-        <input
+        <LocationAutocomplete
           className="search-input"
-          type="text"
           placeholder="To..."
           value={destination}
-          onChange={(e) => setDestination(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter') findRoute(); }}
+          onChangeText={(text) => {
+            setDestination(text);
+            setDestCoords(null); // free type kiya, purana selection clear
+          }}
+          onSelectSuggestion={(s) => setDestCoords(`${s.lat},${s.lon}`)}
+          onEnter={findRoute}
         />
         <button className="search-btn" onClick={findRoute} disabled={loading}>
           {loading ? 'Clearing route...' : 'Dispatch'}
@@ -194,7 +246,11 @@ function EmergencyRoute() {
           </div>
 
           <div className="map-panel">
-            <MapContainer center={result.source_coords} zoom={12} style={{ height: '500px', width: '100%', borderRadius: '12px' }}>
+            <MapContainer
+              center={result.source_coords}
+              zoom={12}
+              style={{ height: '500px', width: '100%', borderRadius: '12px' }}
+            >
               <TileLayer
                 attribution='&copy; OpenStreetMap contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

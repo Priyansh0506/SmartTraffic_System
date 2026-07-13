@@ -3,6 +3,8 @@ import { GoogleMap, Circle, InfoWindow, TrafficLayer } from '@react-google-maps/
 
 const containerStyle = { width: '100%', height: '100%' };
 const defaultCenter = { lat: 28.6, lng: 77.2 };
+// keep this outside component, otherwise map re-applies options every render
+const mapOptions = { streetViewControl: false, mapTypeControl: false };
 
 function circleColor(score) {
   if (score <= 3) return '#4ade80';
@@ -11,9 +13,35 @@ function circleColor(score) {
 }
 
 function statusText(score) {
-  if (score <= 3) return 'Clear';
-  if (score <= 6) return 'Moderate';
-  return 'Heavy';
+  if (score <= 3) return 'Clear traffic';
+  if (score <= 6) return 'Moderate traffic';
+  return 'Heavy traffic';
+}
+
+// city circle = bigger radius, landmark = small (point-level)
+function getRadius(item, isActive) {
+  if (item.place_type === 'city') {
+    return isActive ? 9000 : 6000;
+  }
+  return isActive ? 180 : 100;
+}
+
+// city fill kept light so landmark circle stays visible on top
+function getFillOpacity(item, isActive) {
+  if (item.place_type === 'city') {
+    return isActive ? 0.18 : 0.08;
+  }
+  return isActive ? 0.45 : 0.15;
+}
+
+function getStrokeWeight(item, isActive) {
+  if (item.place_type === 'city') return 1;
+  return isActive ? 2.5 : 1.5;
+}
+
+function getZoomForResult(result) {
+  if (!result) return 16;
+  return result.place_type === 'city' ? 11 : 16;
 }
 
 function PredictionRow({ label, score }) {
@@ -28,26 +56,46 @@ function PredictionRow({ label, score }) {
   );
 }
 
-function GoogleMapView({ searchResult, searchHistory = [] }) {
+function GoogleMapView({ searchResult, searchHistory = [], onMapError }) {
   const [activeMarker, setActiveMarker] = useState(null);
   const mapRef = useRef(null);
+  const [mapCenter, setMapCenter] = useState(defaultCenter);
+  const [mapZoom, setMapZoom] = useState(5);
+  const tilesLoadedRef = useRef(false);
+  const tilesTimeoutRef = useRef(null);
 
   const panToResult = useCallback((result) => {
-    if (result && result.lat && result.lon && mapRef.current) {
-      mapRef.current.panTo({
-        lat: parseFloat(result.lat),
-        lng: parseFloat(result.lon)
-      });
-      mapRef.current.setZoom(14);
-    }
-  }, []);
+  if (!result || !result.lat || !result.lon) return;
+
+  const newCenter = {
+    lat: Number(result.lat),
+    lng: Number(result.lon),
+  };
+
+  setMapCenter(newCenter);
+  setMapZoom(getZoomForResult(result));
+
+  if (mapRef.current) {
+    mapRef.current.panTo(newCenter);
+    mapRef.current.setZoom(getZoomForResult(result));
+  }
+}, []);
 
   const onLoad = useCallback((map) => {
     mapRef.current = map;
-    // map load hone tak searchResult already set ho sakta hai,
-    // isliye yaha bhi ek baar pan kar do
     panToResult(searchResult);
-  }, [searchResult, panToResult]);
+
+    if (tilesTimeoutRef.current) {
+      clearTimeout(tilesTimeoutRef.current);
+    }
+
+    tilesLoadedRef.current = false;
+    tilesTimeoutRef.current = window.setTimeout(() => {
+      if (!tilesLoadedRef.current && onMapError) {
+        onMapError(new Error('google-tiles-failed'));
+      }
+    }, 4500);
+  }, [searchResult, panToResult, onMapError]);
 
   const onUnmount = useCallback(() => {
     mapRef.current = null;
@@ -57,18 +105,37 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
     panToResult(searchResult);
   }, [searchResult, panToResult]);
 
+  // draw cities first, landmarks last -> landmarks stay on top
+  const sortedHistory = [...searchHistory].sort((a, b) => {
+    const aCity = a.place_type === 'city' ? -1 : 1;
+    const bCity = b.place_type === 'city' ? -1 : 1;
+    return aCity - bCity;
+  });
+
   return (
     <GoogleMap
       mapContainerStyle={containerStyle}
-      center={defaultCenter}
-      zoom={5}
+      center={mapCenter}
+      zoom={mapZoom}
       onLoad={onLoad}
       onUnmount={onUnmount}
-      options={{ streetViewControl: false, mapTypeControl: false }}
+      options={mapOptions}
+      onTilesLoaded={() => {
+        tilesLoadedRef.current = true;
+        if (tilesTimeoutRef.current) {
+          clearTimeout(tilesTimeoutRef.current);
+          tilesTimeoutRef.current = null;
+        }
+      }}
     >
-      <TrafficLayer />
+      {/* TrafficLayer can sometimes throw if the Maps JS has partial errors
+          (quota/limit messages). Guard it so runtime errors are avoided. */}
+      {typeof window !== 'undefined' && window.google && window.google.maps && (
+        <TrafficLayer />
+      )}
+      <></>
 
-      {searchHistory.map((item, i) => {
+      {sortedHistory.map((item, i) => {
         if (!item.lat || !item.lon) return null;
 
         const color = circleColor(item.current_score);
@@ -80,18 +147,20 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
 
         const score30 = item.predict_30min ?? item.current_score;
         const score60 = item.predict_60min ?? item.current_score;
+        const isCity = item.place_type === 'city';
 
         return (
-          <React.Fragment key={i}>
+          <React.Fragment key={item.location + i}>
             <Circle
               center={position}
-              radius={isActive ? 1200 : 700}
+              radius={getRadius(item, isActive)}
               options={{
                 strokeColor: color,
                 fillColor: color,
-                fillOpacity: isActive ? 0.45 : 0.15,
-                strokeWeight: isActive ? 2.5 : 1.5,
-                clickable: true
+                fillOpacity: getFillOpacity(item, isActive),
+                strokeWeight: getStrokeWeight(item, isActive),
+                clickable: true,
+                zIndex: isCity ? 1 : 10
               }}
               onClick={() => setActiveMarker(i)}
             />
@@ -140,4 +209,4 @@ function GoogleMapView({ searchResult, searchHistory = [] }) {
   );
 }
 
-export default GoogleMapView;
+export default React.memo(GoogleMapView);

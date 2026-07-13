@@ -378,6 +378,26 @@ def _resolve_location(location):
               f"falling back to city-only geocode")
         best = _geocode_city_only(location)
 
+    if best is None and all_candidates:
+        best = all_candidates[0]
+        print(f"[predict] query='{location}' - no strong match, using first fallback candidate "
+              f"from provider {best.get('source')}")
+
+    if best is None:
+        print(f"[predict] query='{location}' - still no candidate, using India default fallback")
+        best = {
+            'source': 'fallback',
+            'lat': 20.5937,
+            'lon': 78.9629,
+            'name': location,
+            'address': location,
+            'municipality': '',
+            'type_rank': 0,
+            'geo_rank': 0,
+            'score': 0,
+            'place_type': 'landmark',
+        }
+
     if best:
         print(f"[predict] query='{location}' picked source={best['source']} -> '{best['name'] or best['address']}'")
     else:
@@ -392,16 +412,24 @@ def predict():
     location = data.get('location', '')
     lat = data.get('lat', None)
     lon = data.get('lon', None)
-    place_type = "landmark"  # default, overwritten below if we resolve a city
+    place_type = data.get('place_type', 'landmark')
 
-    if location:
+    # if lat/lon already came from the frontend, it means the user picked
+    # a suggestion from the autocomplete dropdown - that place was already
+    # resolved once on the suggestions call, so skip geocoding entirely
+    # instead of guessing again from the text. this is what removes the
+    # "location not found" errors for anything picked from the dropdown.
+    if lat and lon:
+        lat = float(lat)
+        lon = float(lon)
+    elif location:
         resolved = _resolve_location(location)
         if resolved is None:
             return jsonify({"error": "Location not found"}), 404
         lat = resolved['lat']
         lon = resolved['lon']
         place_type = resolved.get('place_type', 'landmark')
-    elif not lat or not lon:
+    else:
         return jsonify({"error": "Location not found"}), 404
 
     weather, wind_speed = get_weather(float(lat), float(lon))

@@ -7,14 +7,20 @@ import RouteOptimizer from './RouteOptimizer';
 import EmergencyRoute from './EmergencyRoute';
 import Home from './Home';
 import PeakHourChart from './PeakHourChart';
+import LocationAutocomplete from './LocationAutocomplete';
 import { SkeletonCard, SkeletonMap } from './SkeletonCard';
 
 function App() {
   const [searchLocation, setSearchLocation] = useState('');
+  // agar user ne dropdown se koi suggestion select ki hai to uske lat/lon
+  // yahan store hote hain - taaki backend ko dobara geocoding guess na
+  // karni pade aur "location not found" wala error na aaye
+  const [selectedCoords, setSelectedCoords] = useState(null);
   const [searchResult, setSearchResult] = useState(null);
   const [searchHistory, setSearchHistory] = useState([]);
   const [searching, setSearching] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
+
   const [accidentRisk, setAccidentRisk] = useState(null);
   const [riskLoading, setRiskLoading] = useState(false);
 
@@ -28,7 +34,10 @@ function App() {
     let predictData;
     try {
       const res = await api.post('/api/predict', {
-        location: searchLocation
+        location: searchLocation,
+        lat: selectedCoords?.lat,
+        lon: selectedCoords?.lon,
+        place_type: selectedCoords?.place_type,
       });
       predictData = res.data;
     } catch (err) {
@@ -39,9 +48,9 @@ function App() {
 
     // location was found successfully - show it right away, don't let
     // a slow/failed accident-risk call block or hide this result
-    const result = { location: searchLocation, ...predictData, accident_risk: null };
+    const result = { location: searchLocation, ...predictData, accident_risk: null, timestamp: Date.now() };
     setSearchResult(result);
-    setSearchHistory(prev => [result, ...prev.slice(0, 9)]);
+    setSearchHistory((prev) => [result, ...prev.slice(0, 9)]);
     setSearching(false);
 
     // Step 2: accident risk is a separate, independent call. If it
@@ -54,12 +63,12 @@ function App() {
         lat: predictData.lat,
         lon: predictData.lon,
         vehicle_count: predictData.vehicle_count,
-        weather: predictData.weather
+        weather: predictData.weather,
       });
 
       const finalResult = { ...result, accident_risk: riskRes.data };
       setSearchResult(finalResult);
-      setSearchHistory(prev => [finalResult, ...prev.slice(1)]);
+      setSearchHistory((prev) => [finalResult, ...prev.slice(1)]);
       setAccidentRisk(riskRes.data);
     } catch (err) {
       setAccidentRisk(null);
@@ -69,9 +78,9 @@ function App() {
   };
 
   const getStatus = (score) => {
-    if (score <= 3) return { label: 'Clear', cls: 'status-clear', scoreCls: 'score-clear' };
-    if (score <= 6) return { label: 'Moderate', cls: 'status-moderate', scoreCls: 'score-moderate' };
-    return { label: 'Heavy', cls: 'status-heavy', scoreCls: 'score-heavy' };
+    if (score <= 3) return { label: 'Clear traffic', cls: 'status-clear', scoreCls: 'score-clear' };
+    if (score <= 6) return { label: 'Moderate traffic', cls: 'status-moderate', scoreCls: 'score-moderate' };
+    return { label: 'Heavy traffic', cls: 'status-heavy', scoreCls: 'score-heavy' };
   };
 
   const getRiskColor = (level) => {
@@ -84,6 +93,7 @@ function App() {
   const selectHistoryItem = (item) => {
     setSearchResult(item);
     setAccidentRisk(item.accident_risk || null);
+    setSelectedCoords(null);
   };
 
   return (
@@ -111,7 +121,7 @@ function App() {
               className={`tab-btn ${activeTab === 'demo' ? 'tab-active' : ''}`}
               onClick={() => setActiveTab('demo')}
             >
-              Demo Evaluation
+              Demo
             </button>
             <button
               className={`tab-btn ${activeTab === 'route' ? 'tab-active' : ''}`}
@@ -129,20 +139,23 @@ function App() {
         </div>
       </header>
 
-      {activeTab === 'home' && (
-        <Home onNavigate={(tab) => setActiveTab(tab)} />
-      )}
+      {activeTab === 'home' && <Home onNavigate={(tab) => setActiveTab(tab)} />}
 
       {activeTab === 'monitor' && (
         <main className="app-main">
           <div className="search-row">
-            <input
+            <LocationAutocomplete
               className="search-input"
-              type="text"
               placeholder="Search a location in India..."
               value={searchLocation}
-              onChange={(e) => setSearchLocation(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && searchTraffic()}
+              onChangeText={(text) => {
+                setSearchLocation(text);
+                setSelectedCoords(null); // free type kiya, purana selection clear
+              }}
+              onSelectSuggestion={(s) =>
+                setSelectedCoords({ lat: s.lat, lon: s.lon, place_type: s.place_type })
+              }
+              onEnter={searchTraffic}
             />
             <button className="search-btn" onClick={searchTraffic} disabled={searching}>
               {searching ? 'Searching...' : 'Search'}
@@ -203,31 +216,45 @@ function App() {
                   {/* accident risk section */}
                   <div className="pred-section" style={{ marginTop: 16 }}>
                     <p className="pred-title">Accident Risk</p>
-                    {riskLoading && (
-                      <p style={{ fontSize: 12, color: '#6b7280' }}>Checking...</p>
-                    )}
+                    {riskLoading && <p style={{ fontSize: 12, color: '#6b7280' }}>Checking...</p>}
                     {!riskLoading && !accidentRisk && (
                       <p style={{ fontSize: 12, color: '#6b7280' }}>Risk data unavailable right now.</p>
                     )}
                     {accidentRisk && !riskLoading && (
-                      <div style={{
-                        background: '#111318',
-                        border: `1px solid ${getRiskColor(accidentRisk.risk_level)}33`,
-                        borderRadius: 8,
-                        padding: '14px 16px',
-                        marginTop: 8
-                      }}>
+                      <div
+                        style={{
+                          background: '#111318',
+                          border: `1px solid ${getRiskColor(accidentRisk.risk_level)}33`,
+                          borderRadius: 8,
+                          padding: '14px 16px',
+                          marginTop: 8,
+                        }}
+                      >
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: 13, fontWeight: 600, color: getRiskColor(accidentRisk.risk_level) }}>
+                          <span
+                            style={{
+                              fontSize: 13,
+                              fontWeight: 600,
+                              color: getRiskColor(accidentRisk.risk_level),
+                            }}
+                          >
                             {accidentRisk.risk_level} Risk
                           </span>
-                          <span style={{ fontSize: 18, fontWeight: 700, color: getRiskColor(accidentRisk.risk_level) }}>
+                          <span
+                            style={{
+                              fontSize: 18,
+                              fontWeight: 700,
+                              color: getRiskColor(accidentRisk.risk_level),
+                            }}
+                          >
                             {accidentRisk.risk_score}/10
                           </span>
                         </div>
                         <ul style={{ marginTop: 10, paddingLeft: 18, fontSize: 12, color: '#9ca3af' }}>
                           {accidentRisk.factors.map((f, i) => (
-                            <li key={i} style={{ marginBottom: 4 }}>{f}</li>
+                            <li key={i} style={{ marginBottom: 4 }}>
+                              {f}
+                            </li>
                           ))}
                         </ul>
                       </div>
@@ -258,11 +285,7 @@ function App() {
             </div>
 
             <div className="map-panel">
-              {searching ? (
-                <SkeletonMap />
-              ) : (
-                <SmartMap searchResult={searchResult} searchHistory={searchHistory} />
-              )}
+              {searching ? <SkeletonMap /> : <SmartMap searchResult={searchResult} searchHistory={searchHistory} />}
             </div>
           </div>
         </main>

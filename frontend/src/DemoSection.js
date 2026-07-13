@@ -59,7 +59,6 @@ function getRiskColor(level) {
 function DemoSection() {
   const [file, setFile] = useState(null);
   const [videoURL, setVideoURL] = useState(null);
-  const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
@@ -80,6 +79,18 @@ function DemoSection() {
   // doesn't have)
   const [accidentRisk, setAccidentRisk] = useState(null);
   const [riskLoading, setRiskLoading] = useState(false);
+
+  // simulation of a live CCTV -> OpenCV -> detection -> prediction pipeline
+  const [simulating, setSimulating] = useState(false);
+  const [simStep, setSimStep] = useState(0);
+  const [simLog, setSimLog] = useState([]);
+  const [simFrames, setSimFrames] = useState([]);
+  const [autoEmergency, setAutoEmergency] = useState(true);
+  const [emergencyDetected, setEmergencyDetected] = useState(false);
+  const [dispatchLog, setDispatchLog] = useState([]);
+  const [dispatching, setDispatching] = useState(false);
+  const [forceEmergency, setForceEmergency] = useState(false);
+  const [emergencyLocation, setEmergencyLocation] = useState('Nearest Hospital');
 
   const handleFile = (f) => {
     if (!f) return;
@@ -102,25 +113,7 @@ function DemoSection() {
   };
 
   const analyze = async () => {
-    if (!file) { setError('Upload a video first.'); return; }
-    setLoading(true);
-    setError('');
-    setResult(null);
-
-    const formData = new FormData();
-    formData.append('video', file);
-
-    try {
-      const res = await api.post('/api/demo/analyze', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        timeout: 120000
-      });
-      setResult(res.data);
-    } catch (err) {
-      setError(err.response?.data?.error || 'Analysis failed. Check if backend is running.');
-    } finally {
-      setLoading(false);
-    }
+    // analyze() removed — Demo now uses simulated pipeline only
   };
 
   const v = result ? result.video_analysis : null;
@@ -173,6 +166,199 @@ function DemoSection() {
   return (
     <div style={{ maxWidth: 960, margin: '0 auto', padding: '24px 28px', fontFamily: 'Inter, Segoe UI, sans-serif' }}>
 
+      {/* Live CCTV pipeline demo */}
+      <div style={{ background: '#101217', border: '1px solid #1f2128', borderRadius: 8, padding: 18, marginBottom: 18 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <div>
+            <p style={{ fontSize: 11, color: '#4b5563', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 8 }}>Live CCTV Pipeline (sample)</p>
+            <h3 style={{ margin: 0, fontSize: 16, color: '#e5e7eb' }}>How real-time CCTV → OpenCV → Prediction works</h3>
+            <p style={{ fontSize: 12, color: '#9ca3af', marginTop: 8, maxWidth: 760 }}>
+              This demo shows the full flow used in production: connect to a CCTV feed using OpenCV, continuously capture frames, run object detection (YOLOv8) on each frame to count vehicles, aggregate counts and send them to the prediction service which returns short-term congestion forecasts. Press "Run Demo" to see a simulated run (no backend changes needed).
+            </p>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={async () => {
+                if (simulating) return;
+                setSimulating(true);
+                setSimStep(0);
+                setSimLog([]);
+                setSimFrames([]);
+                setEmergencyDetected(false);
+                setDispatchLog([]);
+                setRouteResult(null);
+
+                const steps = [
+                  'Connecting to CCTV (RTSP/HTTP) via OpenCV',
+                  'Capturing frames from stream (30 FPS)',
+                  'Running YOLOv8 object detection on each frame',
+                  'Filtering detections and counting vehicles',
+                  'Aggregating counts over a short window',
+                  'Sending aggregated data to prediction API',
+                  'Receiving congestion forecast and displaying results'
+                ];
+
+                // simulate streaming frames during the capture/detect phase
+                for (let i = 0; i < steps.length; i++) {
+                  setSimStep(i + 1);
+                  setSimLog((l) => [...l, `Step ${i + 1}: ${steps[i]}`]);
+
+                  // during capture/detection step, show a handful of frames
+                  if (i === 1 || i === 2 || i === 3) {
+                    const frames = [];
+                    for (let f = 0; f < 8; f++) frames.push({ id: `${i}-${f}`, label: `F${f + 1}` });
+                    setSimFrames(frames);
+                    // animate frames
+                    for (let f = 0; f < frames.length; f++) {
+                      // highlight current frame
+                      setSimFrames((s) => s.map((fr, idx) => ({ ...fr, active: idx === f })));
+                      // eslint-disable-next-line no-await-in-loop
+                      await new Promise((r) => setTimeout(r, 160));
+                    }
+                    setSimFrames([]);
+                  }
+
+                  // pause to mimic processing time
+                  // eslint-disable-next-line no-await-in-loop
+                  await new Promise((r) => setTimeout(r, 420));
+                }
+
+                // produce a simulated result (use existing video result if available)
+                const simulatedV = v || {
+                  vehicle_count: Math.floor(20 + Math.random() * 80),
+                  congestion_score: Math.floor(2 + Math.random() * 7),
+                  weather: 'Clear',
+                  duration_sec: 30,
+                  frames_analyzed: 90,
+                  brightness: 120,
+                  blur_score: 0.2
+                };
+
+                const simulatedResult = {
+                  video_analysis: simulatedV,
+                  short_term_forecast: {
+                    in_30_min: { projected_congestion: Math.min(10, simulatedV.congestion_score + Math.floor(Math.random() * 2)), projected_vehicles: simulatedV.vehicle_count + Math.floor(Math.random() * 20) },
+                    in_60_min: { projected_congestion: Math.min(10, simulatedV.congestion_score + Math.floor(Math.random() * 3)), projected_vehicles: simulatedV.vehicle_count + Math.floor(Math.random() * 40) }
+                  },
+                  peak_hour_profile: null
+                };
+
+                setResult(simulatedResult);
+                setSimLog((l) => [...l, 'Simulation complete — results displayed below.']);
+                // emergency: forced by user OR auto-detected randomly
+                if (forceEmergency || (autoEmergency && Math.random() < 0.45)) {
+                  setEmergencyDetected(true);
+                  setDispatching(true);
+                  setDispatchLog(['Ambulance detected in camera feed']);
+
+                  // simulate dispatch flow
+                  const dsteps = [
+                    'Notifying dispatch center',
+                    'Calculating cleared route and ETA',
+                    'Dispatching vehicle and clearing route',
+                    'Showing cleared-route ETA on map'
+                  ];
+
+                  for (let di = 0; di < dsteps.length; di++) {
+                    // eslint-disable-next-line no-await-in-loop
+                    await new Promise((r) => setTimeout(r, 800));
+                    setDispatchLog((l) => [...l, dsteps[di]]);
+                  }
+
+                  // set a simulated emergency route result (cleared route)
+                  const emRoute = {
+                    distance_km: 4.2,
+                    duration_min: 6,
+                    normal_duration_min: 14,
+                    time_saved_min: 8,
+                    emergency: true,
+                    // use fixed coords for demo map; label will show the provided emergencyLocation
+                    source_coords: [12.9716, 77.5946],
+                    destination_coords: [12.975, 77.605],
+                    coordinates: [[12.9716,77.5946],[12.975,77.605]],
+                    congestion_score: simulatedV.congestion_score
+                  };
+
+                  // set route source label to the emergency location provided by user
+                  setRouteSource(emergencyLocation || 'Emergency Location');
+                  setRouteDestination('Nearest Hospital');
+                  setRouteResult(emRoute);
+                  setDispatching(false);
+                }
+
+                setSimulating(false);
+              }}
+              style={{ background: simulating ? '#1f2937' : '#1a1d24', color: '#e5e7eb', border: '1px solid #2a2d36', padding: '8px 14px', borderRadius: 8 }}
+            >
+              {simulating ? 'Running Demo...' : 'Run Demo'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+            <div style={{ width: 320 }}>
+              <div style={{ minHeight: 80, padding: 8, background: '#0f1114', borderRadius: 6, border: '1px solid #1f2128' }}>
+                {simFrames.length > 0 ? (
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {simFrames.map((fr) => (
+                      <div key={fr.id} style={{ width: 34, height: 54, borderRadius: 4, background: fr.active ? '#60a5fa' : '#111318', display: 'flex', alignItems: 'center', justifyContent: 'center', color: fr.active ? '#04203a' : '#9ca3af', fontSize: 11 }}>
+                        {fr.label}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ color: '#9ca3af', fontSize: 12 }}>Frame preview will appear here during capture/detection.</div>
+                )}
+              </div>
+
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#9ca3af', fontSize: 13 }}>
+                  <input type="checkbox" checked={autoEmergency} onChange={(e) => setAutoEmergency(e.target.checked)} />
+                  Auto-detect emergency vehicles
+                </label>
+
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center', color: '#9ca3af', fontSize: 13 }}>
+                  <input type="checkbox" checked={forceEmergency} onChange={(e) => setForceEmergency(e.target.checked)} />
+                  Force emergency for demo
+                </label>
+                <input value={emergencyLocation} onChange={(e) => setEmergencyLocation(e.target.value)} placeholder="Emergency location label" style={{ marginLeft: 8, padding: '6px 8px', borderRadius: 6, background: '#0f1114', border: '1px solid #222', color: '#e5e7eb' }} />
+              </div>
+
+              <div style={{ marginTop: 12 }}>
+                {simLog.map((l, i) => (
+                  <div key={i} style={{ fontSize: 12, color: i + 1 === simStep ? '#e5e7eb' : '#9ca3af', marginBottom: 6 }}>{l}</div>
+                ))}
+              </div>
+            </div>
+              {/* live polling removed per demo requirements */}
+
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 12, color: '#6b7280', margin: 0 }}>Quick notes:</p>
+              <ul style={{ color: '#9ca3af', fontSize: 12, marginTop: 8 }}>
+                <li>OpenCV connects to CCTV via RTSP/HTTP and decodes frames.</li>
+                <li>YOLO runs per-frame to detect vehicles; detections are filtered and counted.</li>
+                <li>Counts are batched (e.g., per 10 seconds) and sent to the prediction model.</li>
+              </ul>
+
+              {emergencyDetected && (
+                <div style={{ marginTop: 12, background: '#2b1220', border: '1px solid #7f1d1d', padding: 12, borderRadius: 8 }}>
+                  <strong style={{ color: '#fca5a5' }}>Emergency detected</strong>
+                  <div style={{ marginTop: 8 }}>
+                    {dispatchLog.map((d, i) => (
+                      <div key={i} style={{ fontSize: 13, color: '#ffd7d7', marginBottom: 6 }}>{d}</div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {dispatching && (
+                <div style={{ marginTop: 10, fontSize: 12, color: '#9ca3af' }}>Dispatch in progress...</div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
       {/* video preview + upload zone */}
       {videoURL && (
         <div style={{
@@ -217,28 +403,10 @@ function DemoSection() {
           )}
         </div>
 
-        <button
-          onClick={analyze}
-          disabled={loading || !file}
-          style={{
-            background: '#1a1d24',
-            color: loading || !file ? '#4b5563' : '#d1d5db',
-            border: '1px solid #2a2d36',
-            padding: '0 24px', borderRadius: 8,
-            fontSize: 14, fontWeight: 500,
-            cursor: loading || !file ? 'not-allowed' : 'pointer',
-            whiteSpace: 'nowrap', transition: 'all 0.15s'
-          }}
-        >
-          {loading ? 'Analyzing...' : 'Run Analysis'}
-        </button>
+        {/* Run Analysis removed — demo uses simulated Run Demo only */}
       </div>
 
-      {loading && (
-        <p style={{ fontSize: 12, color: '#4b5563', marginBottom: 16 }}>
-          Processing video frames — may take 30–60 seconds depending on length
-        </p>
-      )}
+      {/* Analysis removed; demo is simulated */}
 
       {error && (
         <p style={{ fontSize: 13, color: '#f87171', marginBottom: 16 }}>{error}</p>

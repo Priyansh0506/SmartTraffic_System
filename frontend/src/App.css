@@ -158,3 +158,20 @@ body {
   background: #2a2d36 !important;
   color: #f3f4f6 !important;
 }
+
+.autocomplete-wrapper { position: relative; flex: 1; }
+.autocomplete-list {
+  position: absolute; top: 100%; left: 0; right: 0;
+  background: #1a1d24; border: 1px solid #2a2d36; border-top: none;
+  border-radius: 0 0 6px 6px; list-style: none; margin: 0; padding: 4px 0;
+  max-height: 240px; overflow-y: auto; z-index: 50;
+}
+.autocomplete-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 13px; font-size: 13px; color: #d1d5db;
+  cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.autocomplete-item:hover, .autocomplete-item-active { background: #2a2d36; color: #f3f4f6; }
+.autocomplete-pin { font-size: 11px; flex-shrink: 0; }
+.autocomplete-label { overflow: hidden; text-overflow: ellipsis; }
+.autocomplete-loading { color: #6b7280; cursor: default; }

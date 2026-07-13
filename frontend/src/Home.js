@@ -133,7 +133,7 @@ function Home({ onNavigate }) {
     },
     {
       id: 'demo',
-      title: 'Demo Evaluation',
+      title: 'Demo',
       desc: 'Upload a traffic video and the system detects vehicles itself using YOLOv8 object detection, no manual tagging needed.',
       stat: 'YOLO + ML',
       color: '#4ade80'

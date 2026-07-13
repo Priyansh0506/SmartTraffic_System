@@ -10,3 +10,4 @@ ultralytics
 gunicorn
 joblib
 scikit-learn==1.8.0
+flask-socketio

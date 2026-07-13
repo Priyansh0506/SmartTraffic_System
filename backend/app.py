@@ -7,6 +7,8 @@ from routes.demo import demo_bp
 from routes.route import route_bp
 from routes.peak import peak_bp
 from routes.accident import accident_bp
+from routes.geocode import geocode_bp
+from routes.ingest import ingest_bp
 
 
 app = Flask(__name__)
@@ -20,6 +22,8 @@ app.register_blueprint(demo_bp)
 app.register_blueprint(route_bp)
 app.register_blueprint(peak_bp)
 app.register_blueprint(accident_bp)
+app.register_blueprint(geocode_bp) 
+app.register_blueprint(ingest_bp)
 
 @app.route('/')
 def home():
