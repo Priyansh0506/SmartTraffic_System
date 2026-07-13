@@ -15,6 +15,23 @@ predict_bp = Blueprint('predict', __name__)
 TOMTOM_API_KEY = os.getenv("TOMTOM_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
+# quick sanity check at startup - if these are missing on Render/Vercel
+# the app will silently fall back to Nominatim only, which gives bad
+# results a lot of the time. logging this loudly so it shows up in
+# the deploy logs instead of us having to guess later.
+if not GOOGLE_API_KEY:
+    print("[startup] WARNING: GOOGLE_API_KEY not set, google geocoding will be skipped")
+if not TOMTOM_API_KEY:
+    print("[startup] WARNING: TOMTOM_API_KEY not set, tomtom geocoding will be skipped")
+
+# rough India bounding box - anything outside this after geocoding is
+# almost certainly a bad match (nominatim sometimes returns a random
+# place abroad when the query is ambiguous)
+INDIA_BOUNDS = {
+    "lat_min": 6.0, "lat_max": 38.0,
+    "lon_min": 68.0, "lon_max": 98.0,
+}
+
 LOCATION_OVERRIDES = {
     "sdm chowk roorkee": (29.8640, 77.8886),
     "civil line roorkee": (29.8640, 77.8886),
@@ -31,6 +48,20 @@ def _check_override(location):
         if all(w in words for w in key_words):
             return coords
     return None
+
+
+def _in_india(lat, lon):
+    """basic guardrail so a bad geocode result doesn't put the marker in another country"""
+    if lat is None or lon is None:
+        return False
+    try:
+        lat = float(lat)
+        lon = float(lon)
+    except (TypeError, ValueError):
+        return False
+    return (INDIA_BOUNDS["lat_min"] <= lat <= INDIA_BOUNDS["lat_max"] and
+            INDIA_BOUNDS["lon_min"] <= lon <= INDIA_BOUNDS["lon_max"])
+
 
 GEO_PRIORITY = {
     "Municipality": 4,
@@ -167,6 +198,7 @@ def _normalize_google(r):
 
 def _google_search(location):
     if not GOOGLE_API_KEY:
+        print(f"[debug] skipping google search for '{location}', no key configured")
         return []
     url = "https://maps.googleapis.com/maps/api/geocode/json"
     params = {"address": location, "region": "in", "key": GOOGLE_API_KEY}
@@ -187,6 +219,10 @@ def _google_search(location):
 
 
 def _tomtom_search(location, use_bias=True, use_idxset=True):
+    if not TOMTOM_API_KEY:
+        print(f"[debug] skipping tomtom search for '{location}', no key configured")
+        return []
+
     params = f"?key={TOMTOM_API_KEY}&countrySet=IN&limit=10"
     if use_idxset:
         params += "&idxSet=Geo,PAD"
@@ -214,6 +250,11 @@ def _nominatim_search(location):
         "addressdetails": 1,
         "countrycodes": "in",
         "limit": 10,
+        # bias results towards the Roorkee/Uttarakhand area so a vague
+        # query doesn't accidentally match a place with the same name
+        # somewhere else in the country
+        "viewbox": "76.5,30.6,79.5,29.0",
+        "bounded": 0,
     }
     headers = {
         "User-Agent": "SmartTrafficSystem/1.0 (contact: your-email@example.com)"
@@ -221,6 +262,8 @@ def _nominatim_search(location):
     try:
         response = requests.get(url, params=params, headers=headers, timeout=5)
         results = response.json() if response.status_code == 200 else []
+        if response.status_code != 200:
+            print(f"[debug] Nominatim returned status_code={response.status_code}")
     except Exception as e:
         print(f"[debug] Nominatim search failed: {e}")
         results = []
@@ -285,7 +328,9 @@ def _geocode_city_only(location):
         candidates = _tomtom_search(anchor, use_bias=True, use_idxset=True)
     if not candidates:
         candidates = _nominatim_search(anchor)
-    candidates = [c for c in candidates if c.get('lat') and c.get('lon')]
+
+    # drop anything with missing coords or coords that clearly aren't in India
+    candidates = [c for c in candidates if c.get('lat') and c.get('lon') and _in_india(c['lat'], c['lon'])]
     if not candidates:
         return None
 
@@ -307,6 +352,7 @@ def _resolve_location(location):
         }
 
     google_candidates = _google_search(location)
+    google_candidates = [c for c in google_candidates if _in_india(c.get('lat'), c.get('lon'))]
     if google_candidates:
         best = google_candidates[0]
         print(f"[predict] query='{location}' picked source=google -> '{best['name'] or best['address']}'")
@@ -321,7 +367,7 @@ def _resolve_location(location):
     nominatim_candidates = _nominatim_search(location)
 
     all_candidates = tomtom_candidates + nominatim_candidates
-    all_candidates = [c for c in all_candidates if c.get('lat') and c.get('lon')]
+    all_candidates = [c for c in all_candidates if c.get('lat') and c.get('lon') and _in_india(c['lat'], c['lon'])]
 
     best = None
     if all_candidates:
@@ -334,6 +380,8 @@ def _resolve_location(location):
 
     if best:
         print(f"[predict] query='{location}' picked source={best['source']} -> '{best['name'] or best['address']}'")
+    else:
+        print(f"[predict] query='{location}' - could not resolve to any valid coordinates")
 
     return best
 
