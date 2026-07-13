@@ -41,7 +41,12 @@ function App() {
       });
       predictData = res.data;
     } catch (err) {
-      alert('Location not found.');
+      const isNetworkError = !err.response;
+      const message = isNetworkError
+        ? 'Backend unreachable. Check REACT_APP_API_URL and redeploy.'
+        : 'Location not found.';
+      alert(message);
+      console.error('[SmartTraffic] predict request failed', err);
       setSearching(false);
       return;
     }

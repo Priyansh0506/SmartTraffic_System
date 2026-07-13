@@ -18,6 +18,10 @@ function resolveApiBase() {
 
 export const API_BASE = resolveApiBase();
 
+if (typeof window !== 'undefined') {
+  console.debug('[SmartTraffic] API_BASE =', API_BASE);
+}
+
 const api = axios.create({
   baseURL: API_BASE,
   timeout: 60000, // route/predict calls can take a few seconds, give them room

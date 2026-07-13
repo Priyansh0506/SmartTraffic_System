@@ -11,6 +11,7 @@ function LocationAutocomplete({ className, placeholder, value, onChangeText, onS
   const [showDropdown, setShowDropdown] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(null);
   const debounceRef = useRef(null);
   const wrapperRef = useRef(null);
 
@@ -37,6 +38,7 @@ function LocationAutocomplete({ className, placeholder, value, onChangeText, onS
 
     debounceRef.current = setTimeout(async () => {
       setLoading(true);
+      setFetchError(null);
       try {
         const res = await api.get('/api/geocode-suggestions', {
           params: { query: value },
@@ -48,9 +50,9 @@ function LocationAutocomplete({ className, placeholder, value, onChangeText, onS
         setShowDropdown(true);
         setActiveIndex(-1);
       } catch (e) {
-        // suggestion fetch fail hui to bas dropdown khaali chhod do,
-        // user phir bhi free-type karke Enter dabake search kar sakta hai
         setSuggestions([]);
+        setFetchError('Unable to fetch location suggestions. Please check backend connectivity.');
+        console.error('[SmartTraffic] geocode-suggestions failed', e);
       }
       setLoading(false);
     }, 350);
@@ -79,16 +81,18 @@ function LocationAutocomplete({ className, placeholder, value, onChangeText, onS
         setActiveIndex((i) => (i - 1 + suggestions.length) % suggestions.length);
         return;
       }
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          if (activeIndex >= 0) {
-            pickSuggestion(suggestions[activeIndex]);
-          } else {
-            setShowDropdown(false);
-            onEnter && onEnter();
-          }
-          return;
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIndex >= 0) {
+          pickSuggestion(suggestions[activeIndex]);
+        } else {
+          // if suggestions are visible but the user presses Enter without
+          // selecting one manually, choose the top suggestion to preserve
+          // the autocomplete result and its coordinates.
+          pickSuggestion(suggestions[0]);
         }
+        return;
+      }
     }
     // fallback: if dropdown not shown, Enter should trigger search
     if (e.key === 'Enter') {
@@ -116,23 +120,25 @@ function LocationAutocomplete({ className, placeholder, value, onChangeText, onS
         autoComplete="off"
       />
 
-      {showDropdown && (loading || suggestions.length > 0) && (
+      {showDropdown && (loading || suggestions.length > 0 || fetchError) && (
         <div className="autocomplete-dropdown">
           {loading && <div className="autocomplete-item autocomplete-loading">Searching...</div>}
-          {!loading &&
-            suggestions.map((s, i) => (
-              <div
-                key={i}
-                className={'autocomplete-item' + (i === activeIndex ? ' autocomplete-item-active' : '')}
-                onMouseDown={() => pickSuggestion(s)}
-                onMouseEnter={() => setActiveIndex(i)}
-              >
-                <span className="autocomplete-item-main">{s.name}</span>
-                {s.display_name && s.display_name !== s.name && (
-                  <span className="autocomplete-item-sub">{s.display_name}</span>
-                )}
-              </div>
-            ))}
+          {!loading && fetchError && (
+            <div className="autocomplete-item autocomplete-error">{fetchError}</div>
+          )}
+          {!loading && !fetchError && suggestions.map((s, i) => (
+            <div
+              key={i}
+              className={'autocomplete-item' + (i === activeIndex ? ' autocomplete-item-active' : '')}
+              onMouseDown={() => pickSuggestion(s)}
+              onMouseEnter={() => setActiveIndex(i)}
+            >
+              <span className="autocomplete-item-main">{s.name}</span>
+              {s.display_name && s.display_name !== s.name && (
+                <span className="autocomplete-item-sub">{s.display_name}</span>
+              )}
+            </div>
+          ))}
         </div>
       )}
     </div>
