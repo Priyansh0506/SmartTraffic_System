@@ -6,6 +6,9 @@ from routes.predict import (
     pick_best_match,
     _tomtom_search,
     _nominatim_search,
+    _check_override,
+    _geocode_city_only,
+    _google_search,
 )
 import datetime
 
@@ -24,23 +27,33 @@ def accident_risk():
     weather = data.get('weather')
 
     if not lat or not lon:
-        tomtom_candidates = _tomtom_search(location, use_bias=True, use_idxset=True)
-        if not tomtom_candidates:
-            tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=True)
-        if not tomtom_candidates:
-            tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=False)
+        override = _check_override(location)
+        if override:
+            lat, lon = override
+        else:
+            google_candidates = _google_search(location)
 
-        nominatim_candidates = _nominatim_search(location)
+            tomtom_candidates = _tomtom_search(location, use_bias=True, use_idxset=True)
+            if not tomtom_candidates:
+                tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=True)
+            if not tomtom_candidates:
+                tomtom_candidates = _tomtom_search(location, use_bias=False, use_idxset=False)
 
-        all_candidates = tomtom_candidates + nominatim_candidates
-        all_candidates = [c for c in all_candidates if c.get('lat') and c.get('lon')]
+            nominatim_candidates = _nominatim_search(location)
 
-        if not all_candidates:
-            return jsonify({"error": "Location not found"}), 404
+            all_candidates = google_candidates + tomtom_candidates + nominatim_candidates
+            all_candidates = [c for c in all_candidates if c.get('lat') and c.get('lon')]
 
-        best = pick_best_match(all_candidates, location)
-        lat = best['lat']
-        lon = best['lon']
+            if not all_candidates:
+                return jsonify({"error": "Location not found"}), 404
+
+            best = pick_best_match(all_candidates, location)
+            if best is None:
+                best = _geocode_city_only(location)
+            if best is None:
+                return jsonify({"error": "Location not found"}), 404
+            lat = best['lat']
+            lon = best['lon']
 
     if weather is None:
         weather, wind_speed = get_weather(float(lat), float(lon))

@@ -26,4 +26,8 @@ def home():
     return "Smart Traffic Backend Running!"
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # use_reloader=False because the reloader would restart the server
+    # mid-request the first time TensorFlow lazy-loads (it sees new
+    # module files show up and thinks that's a code change). just
+    # restart manually when you actually edit something.
+    app.run(debug=True, use_reloader=False)
